@@ -32,9 +32,17 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
+
+# local editor / OS
+Thumbs.db
+.idea/
 
 # vercel
 .vercel
+
+# deploy helper artifacts
+_deploy_*.json
 
 # typescript
 *.tsbuildinfo
