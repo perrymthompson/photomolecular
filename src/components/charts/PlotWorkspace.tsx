@@ -1,9 +1,14 @@
 "use client";
 
+import dynamic from "next/dynamic";
 import { useCallback, useEffect, useState } from "react";
-import { SensorPlot } from "@/components/charts/SensorPlot";
 import { TrialSelector } from "@/components/charts/TrialSelector";
 import type { MetricKey, PlotMode, TrialMeta, TrialSeries } from "@/types/trial";
+
+const SensorPlot = dynamic(
+  () => import("@/components/charts/SensorPlot").then((mod) => mod.SensorPlot),
+  { ssr: false },
+);
 
 export function PlotWorkspace() {
   const [trials, setTrials] = useState<TrialMeta[]>([]);
@@ -63,6 +68,8 @@ export function PlotWorkspace() {
           : ["temp"];
 
   const alignedReady = series.every((s) => s.meta.sessionStartTime);
+  const visibleSeries =
+    mode === "aligned" ? series.filter((s) => s.meta.sessionStartTime) : series;
 
   return (
     <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[280px_1fr]">
@@ -143,16 +150,18 @@ export function PlotWorkspace() {
           </p>
         ) : null}
 
-        <SensorPlot
-          series={
-            mode === "aligned"
-              ? series.filter((s) => s.meta.sessionStartTime)
-              : series
-          }
-          mode={mode}
-          metrics={mode === "aligned" ? ["absHumidity"] : metrics}
-          height={mode === "aligned" || view !== "combined" ? 480 : 720}
-        />
+        {visibleSeries.length > 0 ? (
+          <SensorPlot
+            series={visibleSeries}
+            mode={mode}
+            metrics={mode === "aligned" ? ["absHumidity"] : metrics}
+            height={mode === "aligned" || view !== "combined" ? 480 : 720}
+          />
+        ) : (
+          <div className="flex h-[480px] items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
+            Select one or more trials to plot.
+          </div>
+        )}
       </section>
     </div>
   );
