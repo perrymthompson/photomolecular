@@ -1,0 +1,26 @@
+{
+  "trials": [
+    {
+      "id": "00000000-0000-4000-8000-000000000001",
+      "label": "ch1",
+      "filename": "ch1_07242026A_lau.csv",
+      "notes": "Dark",
+      "sessionStartTime": "12:38:00",
+      "dateLabel": "July 24, 2026 (Run A)",
+      "storagePath": "local:ch1_07242026A_lau.csv",
+      "uploadedAt": "2026-07-24T10:31:54.566Z",
+      "updatedAt": "2026-07-24T10:31:54.566Z"
+    },
+    {
+      "id": "00000000-0000-4000-8000-000000000002",
+      "label": "ch2",
+      "filename": "ch2_07242026A_lau.csv",
+      "notes": "Dark",
+      "sessionStartTime": "12:38:00",
+      "dateLabel": "July 24, 2026 (Run A)",
+      "storagePath": "local:ch2_07242026A_lau.csv",
+      "uploadedAt": "2026-07-24T10:31:54.566Z",
+      "updatedAt": "2026-07-24T10:31:54.566Z"
+    }
+  ]
+}
