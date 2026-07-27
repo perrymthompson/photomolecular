@@ -1,36 +1,67 @@
 import { channelNumber } from "./humidity";
 
-/** Matches R script: lowest channel # → coral, next → steel blue. */
-const OVERRIDES = ["#E2574C", "#4C8FD1"] as const;
-
-/** ggplot2-like hue palette for remaining trials. */
-function huePalette(n: number): string[] {
-  if (n <= 0) return [];
-  const colors: string[] = [];
-  for (let i = 0; i < n; i++) {
-    const h = Math.round((i * 360) / n + 15) % 360;
-    colors.push(`hsl(${h} 65% 55%)`);
-  }
-  return colors;
-}
+/** Distinct colors for up to 30 trials (ggplot-inspired). */
+const PALETTE = [
+  "#E2574C",
+  "#4C8FD1",
+  "#5CB85C",
+  "#F0AD4E",
+  "#9B59B6",
+  "#1ABC9C",
+  "#E67E22",
+  "#3498DB",
+  "#E91E63",
+  "#00BCD4",
+  "#8BC34A",
+  "#FF5722",
+  "#673AB7",
+  "#009688",
+  "#FFC107",
+  "#795548",
+  "#607D8B",
+  "#CDDC39",
+  "#3F51B5",
+  "#FF9800",
+  "#4CAF50",
+  "#2196F3",
+  "#F44336",
+  "#9C27B0",
+  "#00ACC1",
+  "#7CB342",
+  "#EF6C00",
+  "#5C6BC0",
+  "#26A69A",
+  "#D81B60",
+] as const;
 
 /**
- * Assign colors by ascending channel number (same rule as the R script).
+ * One color per trial id. Sorts by channel # when possible so ch1/ch2 keep
+ * familiar colors, but every trial gets a unique swatch.
  */
-export function trialColorMap(labels: string[]): Record<string, string> {
-  const sorted = [...labels].sort((a, b) => {
-    const ca = channelNumber(a);
-    const cb = channelNumber(b);
-    if (Number.isNaN(ca) && Number.isNaN(cb)) return a.localeCompare(b);
-    if (Number.isNaN(ca)) return 1;
-    if (Number.isNaN(cb)) return -1;
-    return ca - cb;
+export function trialColorMapById(
+  trials: { id: string; label: string }[],
+): Record<string, string> {
+  const sorted = [...trials].sort((a, b) => {
+    const ca = channelNumber(a.label);
+    const cb = channelNumber(b.label);
+    if (!Number.isNaN(ca) && !Number.isNaN(cb) && ca !== cb) return ca - cb;
+    return a.label.localeCompare(b.label);
   });
 
-  const extras = huePalette(Math.max(0, sorted.length - OVERRIDES.length));
   const map: Record<string, string> = {};
-  sorted.forEach((label, i) => {
-    map[label] = i < OVERRIDES.length ? OVERRIDES[i] : extras[i - OVERRIDES.length];
+  sorted.forEach((t, i) => {
+    map[t.id] = PALETTE[i % PALETTE.length];
+  });
+  return map;
+}
+
+/** @deprecated use trialColorMapById */
+export function trialColorMap(labels: string[]): Record<string, string> {
+  const trials = labels.map((label, i) => ({ id: String(i), label }));
+  const byId = trialColorMapById(trials);
+  const map: Record<string, string> = {};
+  labels.forEach((label, i) => {
+    map[label] = byId[String(i)];
   });
   return map;
 }

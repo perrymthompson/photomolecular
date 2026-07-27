@@ -2,18 +2,19 @@
 
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis, Shape } from "plotly.js";
-import { DARK_THEME, trialColorMap } from "@/lib/colors";
+import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
+import { uniqueDateLabels } from "@/lib/trial-sort";
 import type { MetricKey, PlotMode, TrialSeries } from "@/types/trial";
 import { METRIC_LABELS } from "@/types/trial";
 
 type Props = {
   series: TrialSeries[];
   mode: PlotMode;
-  /** Which metrics to show as stacked facets (default: all three). */
   metrics?: MetricKey[];
   height?: number;
+  plotRevision?: number;
 };
 
 function metricValue(p: TrialSeries["points"][0], key: MetricKey): number {
@@ -22,11 +23,18 @@ function metricValue(p: TrialSeries["points"][0], key: MetricKey): number {
   return p.temp;
 }
 
+function legendName(s: TrialSeries): string {
+  const dup = s.meta.label;
+  const short = s.meta.filename.replace(/\.csv$/i, "");
+  return `${dup} · ${short}`;
+}
+
 export function SensorPlot({
   series,
   mode,
   metrics = ["absHumidity", "rh", "temp"],
   height = 720,
+  plotRevision = 0,
 }: Props) {
   const [PlotComponent, setPlotComponent] = useState<ComponentType<{
     data: Data[];
@@ -38,27 +46,22 @@ export function SensorPlot({
 
   useEffect(() => {
     let cancelled = false;
-
     if (series.length === 0) {
       setPlotComponent(null);
       return () => {
         cancelled = true;
       };
     }
-
     void import("react-plotly.js").then((mod) => {
-      if (!cancelled) {
-        setPlotComponent(() => mod.default);
-      }
+      if (!cancelled) setPlotComponent(() => mod.default);
     });
-
     return () => {
       cancelled = true;
     };
   }, [series.length]);
 
   const colors = useMemo(
-    () => trialColorMap(series.map((s) => s.meta.label)),
+    () => trialColorMapById(series.map((s) => ({ id: s.meta.id, label: s.meta.label }))),
     [series],
   );
 
@@ -68,7 +71,9 @@ export function SensorPlot({
     const n = metrics.length;
 
     series.forEach((s) => {
-      const color = colors[s.meta.label] ?? "#888";
+      const color = colors[s.meta.id] ?? "#888";
+      const group = s.meta.id;
+      const name = legendName(s);
       const startIso = sessionStartIso(
         s.points[0]?.time,
         s.meta.sessionStartTime,
@@ -89,8 +94,8 @@ export function SensorPlot({
         traces.push({
           type: "scatter",
           mode: "lines",
-          name: s.meta.label,
-          legendgroup: s.meta.label,
+          name,
+          legendgroup: group,
           showlegend: mi === 0,
           x: xs,
           y: ys,
@@ -99,8 +104,8 @@ export function SensorPlot({
           opacity: 0.35,
           hovertemplate:
             mode === "aligned"
-              ? `%{x:.1f} min<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${s.meta.label}</extra>`
-              : `%{x|%H:%M:%S}<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${s.meta.label}</extra>`,
+              ? `%{x:.1f} min<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`
+              : `%{x|%H:%M:%S}<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`,
         });
 
         const xNum =
@@ -116,8 +121,8 @@ export function SensorPlot({
         traces.push({
           type: "scatter",
           mode: "lines",
-          name: `${s.meta.label} (smooth)`,
-          legendgroup: s.meta.label,
+          name: `${name} (smooth)`,
+          legendgroup: group,
           showlegend: false,
           x: smoothX,
           y: smooth.y,
@@ -176,21 +181,16 @@ export function SensorPlot({
 
     const notes = series
       .filter((s) => s.meta.notes?.trim())
-      .map((s) => `${s.meta.label}: ${s.meta.notes.trim()}`)
+      .map((s) => `${legendName(s)}: ${s.meta.notes.trim()}`)
       .join("   |   ");
 
-    const dates = [
-      ...new Set(series.map((s) => s.meta.dateLabel).filter(Boolean)),
-    ] as string[];
+    const dateLabels = uniqueDateLabels(series.map((s) => s.meta));
     const datePart =
-      dates.length === 1
-        ? dates[0]
-        : dates.length > 1
-          ? series
-              .filter((s) => s.meta.dateLabel)
-              .map((s) => `${s.meta.label}: ${s.meta.dateLabel}`)
-              .join("   |   ")
-          : null;
+      dateLabels.length === 0
+        ? null
+        : dateLabels.length === 1
+          ? dateLabels[0]
+          : dateLabels.join("   |   ");
 
     const titleBase =
       mode === "aligned"
@@ -273,6 +273,7 @@ export function SensorPlot({
   return (
     <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
       <PlotComponent
+        key={`plot-${plotRevision}-${mode}-${metrics.join("-")}-${series.map((s) => s.meta.id).join(",")}`}
         data={data}
         layout={layout}
         config={{

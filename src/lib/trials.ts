@@ -122,7 +122,9 @@ async function listSupabaseTrials(): Promise<TrialMeta[]> {
 export async function listTrials(): Promise<TrialMeta[]> {
   if (isSupabaseConfigured()) {
     try {
-      return await listSupabaseTrials();
+      const remote = await listSupabaseTrials();
+      if (remote.length > 0) return remote;
+      // Supabase connected but empty — fall back to bundled/local CSV inventory
     } catch {
       // fall through to local
     }
@@ -204,11 +206,46 @@ export async function loadManySeries(ids: string[]): Promise<TrialSeries[]> {
   return out;
 }
 
+async function assertFilenameAvailable(filename: string) {
+  const safeName = filename.replace(/[^\w.\-]+/g, "_");
+
+  if (isSupabaseConfigured()) {
+    const sb = getSupabaseAdmin()!;
+    const { data } = await sb
+      .from("trials")
+      .select("id")
+      .eq("filename", safeName)
+      .maybeSingle();
+    if (data) {
+      throw new Error(
+        `A CSV named "${safeName}" already exists. Rename the file or delete the existing trial first.`,
+      );
+    }
+    return safeName;
+  }
+
+  const meta = await readLocalMeta();
+  if (meta.trials.some((t) => t.filename === safeName)) {
+    throw new Error(
+      `A CSV named "${safeName}" already exists. Rename the file or delete the existing trial first.`,
+    );
+  }
+  try {
+    await fs.access(path.join(CSV_DIR, safeName));
+    throw new Error(
+      `A CSV named "${safeName}" already exists in data/csv/. Rename the file or delete it first.`,
+    );
+  } catch (err) {
+    if (err instanceof Error && err.message.includes("already exists")) throw err;
+  }
+  return safeName;
+}
+
 export async function saveUploadedCsv(
   filename: string,
   content: Buffer | string,
 ): Promise<TrialMeta> {
-  const safeName = filename.replace(/[^\w.\-]+/g, "_");
+  const safeName = await assertFilenameAvailable(filename);
 
   if (isSupabaseConfigured()) {
     const sb = getSupabaseAdmin()!;
@@ -257,12 +294,6 @@ export async function saveUploadedCsv(
     "utf8",
   );
   const meta = await readLocalMeta();
-  const existing = meta.trials.find((t) => t.filename === safeName);
-  if (existing) {
-    existing.updatedAt = new Date().toISOString();
-    await writeLocalMeta(meta);
-    return existing;
-  }
   const trial = newMeta(safeName, `local:${safeName}`);
   meta.trials.push(trial);
   await writeLocalMeta(meta);
