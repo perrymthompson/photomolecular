@@ -1,15 +1,12 @@
 "use client";
 
-import dynamic from "next/dynamic";
-import { useMemo } from "react";
+import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis, Shape } from "plotly.js";
 import { DARK_THEME, trialColorMap } from "@/lib/colors";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
 import type { MetricKey, PlotMode, TrialSeries } from "@/types/trial";
 import { METRIC_LABELS } from "@/types/trial";
-
-const Plot = dynamic(() => import("react-plotly.js"), { ssr: false });
 
 type Props = {
   series: TrialSeries[];
@@ -31,6 +28,35 @@ export function SensorPlot({
   metrics = ["absHumidity", "rh", "temp"],
   height = 720,
 }: Props) {
+  const [PlotComponent, setPlotComponent] = useState<ComponentType<{
+    data: Data[];
+    layout: Partial<Layout>;
+    config: Record<string, unknown>;
+    style: Record<string, string | number>;
+    useResizeHandler?: boolean;
+  }> | null>(null);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    if (series.length === 0) {
+      setPlotComponent(null);
+      return () => {
+        cancelled = true;
+      };
+    }
+
+    void import("react-plotly.js").then((mod) => {
+      if (!cancelled) {
+        setPlotComponent(() => mod.default);
+      }
+    });
+
+    return () => {
+      cancelled = true;
+    };
+  }, [series.length]);
+
   const colors = useMemo(
     () => trialColorMap(series.map((s) => s.meta.label)),
     [series],
@@ -236,9 +262,17 @@ export function SensorPlot({
     );
   }
 
+  if (!PlotComponent) {
+    return (
+      <div className="flex h-80 items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
+        Loading plot…
+      </div>
+    );
+  }
+
   return (
     <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
-      <Plot
+      <PlotComponent
         data={data}
         layout={layout}
         config={{
