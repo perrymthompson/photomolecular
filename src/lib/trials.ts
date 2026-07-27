@@ -8,6 +8,7 @@ import type { TrialMeta, TrialSeries } from "@/types/trial";
 const DATA_DIR = path.join(process.cwd(), "data");
 const CSV_DIR = path.join(DATA_DIR, "csv");
 const META_PATH = path.join(DATA_DIR, "metadata.json");
+const IS_VERCEL = Boolean(process.env.VERCEL);
 
 type MetaFile = { trials: TrialMeta[] };
 
@@ -21,14 +22,29 @@ async function ensureLocalDirs() {
 }
 
 async function readLocalMeta(): Promise<MetaFile> {
-  await ensureLocalDirs();
-  const raw = await fs.readFile(META_PATH, "utf8");
-  return JSON.parse(raw) as MetaFile;
+  try {
+    const raw = await fs.readFile(META_PATH, "utf8");
+    return JSON.parse(raw) as MetaFile;
+  } catch {
+    return { trials: [] };
+  }
 }
 
 async function writeLocalMeta(meta: MetaFile) {
   await ensureLocalDirs();
   await fs.writeFile(META_PATH, JSON.stringify(meta, null, 2), "utf8");
+}
+
+function canWriteLocalData() {
+  return !IS_VERCEL;
+}
+
+function requireWritableLocalData(feature: string) {
+  if (!canWriteLocalData()) {
+    throw new Error(
+      `${feature} requires Supabase on Vercel. Add the Supabase env vars before using online uploads or metadata edits.`,
+    );
+  }
 }
 
 function newMeta(filename: string, storagePath: string): TrialMeta {
@@ -48,11 +64,13 @@ function newMeta(filename: string, storagePath: string): TrialMeta {
 
 /** Discover local CSVs and ensure each has a metadata row. */
 export async function syncLocalInventory(): Promise<TrialMeta[]> {
-  await ensureLocalDirs();
   const meta = await readLocalMeta();
-  const files = (await fs.readdir(CSV_DIR)).filter((f) =>
-    f.toLowerCase().endsWith(".csv"),
-  );
+  let files: string[] = [];
+  try {
+    files = (await fs.readdir(CSV_DIR)).filter((f) => f.toLowerCase().endsWith(".csv"));
+  } catch {
+    files = [];
+  }
   const byFile = new Map(meta.trials.map((t) => [t.filename, t]));
   let changed = false;
 
@@ -75,7 +93,7 @@ export async function syncLocalInventory(): Promise<TrialMeta[]> {
     changed = true;
   }
 
-  if (changed) await writeLocalMeta(meta);
+  if (changed && canWriteLocalData()) await writeLocalMeta(meta);
   return meta.trials;
 }
 
@@ -144,6 +162,7 @@ export async function updateTrial(
     };
   }
 
+  requireWritableLocalData("Editing local trial metadata");
   const meta = await readLocalMeta();
   const idx = meta.trials.findIndex((t) => t.id === id);
   if (idx < 0) return null;
@@ -230,6 +249,7 @@ export async function saveUploadedCsv(
     };
   }
 
+  requireWritableLocalData("Uploading CSVs without Supabase");
   await ensureLocalDirs();
   await fs.writeFile(
     path.join(CSV_DIR, safeName),
@@ -258,6 +278,7 @@ export async function deleteTrial(id: string): Promise<boolean> {
     await sb.from("trials").delete().eq("id", id);
     return true;
   }
+  requireWritableLocalData("Deleting local trial metadata");
   const meta = await readLocalMeta();
   const trial = meta.trials.find((t) => t.id === id);
   if (!trial) return false;

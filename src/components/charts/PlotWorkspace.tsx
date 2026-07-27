@@ -21,7 +21,20 @@ export function PlotWorkspace() {
 
   useEffect(() => {
     fetch("/api/trials")
-      .then((r) => r.json())
+      .then(async (r) => {
+        const data = (await r.json()) as TrialMeta[] | { error?: string };
+        if (!r.ok) {
+          throw new Error(
+            typeof data === "object" && data && "error" in data
+              ? (data.error ?? "Failed to load trials")
+              : "Failed to load trials",
+          );
+        }
+        if (!Array.isArray(data)) {
+          throw new Error("Trials API returned an unexpected response.");
+        }
+        return data;
+      })
       .then((data: TrialMeta[]) => {
         setTrials(data);
         // Pre-select first two if available (R script minimum)
