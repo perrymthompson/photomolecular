@@ -44,6 +44,7 @@ import type {
   Shape,
 } from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
+import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { uniqueDateLabels } from "@/lib/trial-sort";
@@ -68,6 +69,8 @@ type Props = {
   showSmooth?: boolean;
   /** Draw bookmark diamonds + guide lines (default true). */
   showBookmarks?: boolean;
+  /** Plot every CSV sample (slower); default false uses ~1800 evenly spaced points. */
+  fullResolution?: boolean;
   /** Click a point/time → fill bookmark form (does not create a bookmark). */
   onTimePick?: (pick: PlotTimePick) => void;
 };
@@ -79,8 +82,7 @@ type CurveMeta = {
   bookmarkCount?: number;
 };
 
-const BOOKMARK_SIZE = 11;
-const BOOKMARK_HOVER_SIZE = 18;
+const BOOKMARK_SIZE = 13;
 
 /** Stable fingerprint of sensor points (ignores bookmark/notes edits). */
 function pointsFingerprint(series: TrialSeries[]): string {
@@ -271,18 +273,6 @@ function paddedRange(vals: number[]): [number, number] {
   return [lo - pad, hi + pad];
 }
 
-function getPlotlyApi(
-  mod: typeof import("plotly.js/dist/plotly"),
-): {
-  restyle: (
-    graphDiv: unknown,
-    update: Record<string, unknown>,
-    traces?: number | number[],
-  ) => Promise<unknown>;
-} {
-  return mod.default ?? mod;
-}
-
 export function SensorPlot({
   series,
   mode,
@@ -291,6 +281,7 @@ export function SensorPlot({
   plotRevision = 0,
   showSmooth = true,
   showBookmarks = true,
+  fullResolution = false,
   onTimePick,
 }: Props) {
   // Lazy-load Plotly only when we have data (keeps initial bundle smaller).
@@ -304,22 +295,16 @@ export function SensorPlot({
     onInitialized?: (figure: unknown, graphDiv: HTMLElement) => void;
     onUpdate?: (figure: unknown, graphDiv: HTMLElement) => void;
     onClick?: (e: Readonly<PlotMouseEvent>) => void;
-    onHover?: (e: Readonly<PlotMouseEvent>) => void;
-    onUnhover?: (e: Readonly<PlotMouseEvent>) => void;
   }> | null>(null);
 
   const curveMetaRef = useRef<CurveMeta[]>([]);
   const graphDivRef = useRef<HTMLElement | null>(null);
-  const hoverBmRef = useRef<{
-    curveNumber: number;
-    count: number;
-    pointIndex: number;
-  } | null>(null);
   const lowessCacheRef = useRef(
     new Map<string, { x: number[]; y: number[] }>(),
   );
   const seriesRef = useRef(series);
   seriesRef.current = series;
+  const suppressClicksUntilRef = useRef(0);
 
   const pointsKey = useMemo(() => pointsFingerprint(series), [series]);
   const bookmarksKey = useMemo(() => bookmarksFingerprint(series), [series]);
@@ -344,8 +329,12 @@ export function SensorPlot({
   // Drop LOWESS cache when the underlying samples change.
   useEffect(() => {
     lowessCacheRef.current.clear();
-    hoverBmRef.current = null;
-  }, [pointsKey, mode, showSmooth]);
+    suppressClicksUntilRef.current = Date.now() + 400;
+  }, [pointsKey, mode, showSmooth, fullResolution]);
+
+  useEffect(() => {
+    suppressClicksUntilRef.current = Date.now() + 200;
+  }, [bookmarksKey, plotRevision]);
 
   const colors = useMemo(
     () => trialColorMapById(series.map((s) => ({ id: s.meta.id, label: s.meta.label }))),
@@ -384,22 +373,28 @@ export function SensorPlot({
         s.meta.sessionStartTime,
       );
 
+      // Cap points before smoothing / hover unless full resolution is on.
+      const keep = plotPointIndices(
+        s.points.length,
+        fullResolution,
+        PLOT_MAX_POINTS,
+      );
+      const pts = keep.map((i) => s.points[i]);
+
       metrics.forEach((metric, mi) => {
         const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
-        const xsCal = s.points.map((p) => p.time);
-        const ys = s.points.map((p) => metricValue(p, metric));
+        const xsCal = pts.map((p) => p.time);
+        const ys = pts.map((p) => metricValue(p, metric));
         metricValues[mi].push(...ys);
 
         let xs: (string | number)[] = xsCal;
         if (mode === "aligned") {
           if (!startIso) return;
           const t0 = Date.parse(startIso);
-          xs = s.points.map((p) => (Date.parse(p.time) - t0) / 60000);
+          xs = pts.map((p) => (Date.parse(p.time) - t0) / 60000);
         }
 
-        const clockLabels = s.points.map((p) =>
-          formatClockUtc(new Date(p.time)),
-        );
+        const clockLabels = pts.map((p) => formatClockUtc(new Date(p.time)));
 
         traces.push({
           type: "scatter",
@@ -504,7 +499,7 @@ export function SensorPlot({
     return { traces, meta, shapes, yAxes, n };
     // pointsKey stands in for series samples; colors keyed by trial ids in pointsKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pointsKey, mode, metrics, colors, showSmooth]);
+  }, [pointsKey, mode, metrics, colors, showSmooth, fullResolution]);
 
   /** Cheap layer: bookmark markers + guide lines only. */
   const bookmarkLayer = useMemo(() => {
@@ -635,7 +630,8 @@ export function SensorPlot({
         font: { color: DARK_THEME.text },
       },
       margin: { t: notes ? 72 : 56, r: 24, b: 56, l: 72 },
-      hovermode: "x unified",
+      hovermode: "x",
+      hoverdistance: 20,
       uirevision: "sensor-plot",
       shapes: [...base.shapes, ...bookmarkLayer.shapes],
       xaxis: {
@@ -648,6 +644,11 @@ export function SensorPlot({
         },
         gridcolor: DARK_THEME.gridMajor,
         tickfont: { color: DARK_THEME.subtext, size: 10 },
+        showspikes: true,
+        spikemode: "across",
+        spikethickness: 1,
+        spikedash: "dot",
+        spikecolor: DARK_THEME.subtext,
         anchor: (base.n > 1 ? `y${base.n}` : "y") as LayoutAxis["anchor"],
         ...(mode === "calendar"
           ? { type: "date" as const, tickformat: "%H:%M" }
@@ -668,83 +669,9 @@ export function SensorPlot({
   // curveNumber order = base traces then bookmark traces
   curveMetaRef.current = [...base.meta, ...bookmarkLayer.meta];
 
-  const resetBookmarkHover = () => {
-    const prev = hoverBmRef.current;
-    const gd = graphDivRef.current;
-    if (!prev || !gd) return;
-    hoverBmRef.current = null;
-    const sizes = Array.from({ length: prev.count }, () => BOOKMARK_SIZE);
-    void import("plotly.js/dist/plotly").then((mod) => {
-      void getPlotlyApi(mod).restyle(
-        gd,
-        { "marker.size": [sizes] },
-        [prev.curveNumber],
-      );
-    });
-  };
-
-  const handleHover = (e: Readonly<PlotMouseEvent>) => {
-    const points = e.points ?? [];
-    const bmPt = points.find(
-      (p) => curveMetaRef.current[p.curveNumber]?.kind === "bookmark",
-    );
-    if (!bmPt) {
-      resetBookmarkHover();
-      return;
-    }
-
-    const m = curveMetaRef.current[bmPt.curveNumber]!;
-    const count = m.bookmarkCount ?? 1;
-    const idx =
-      typeof bmPt.pointIndex === "number"
-        ? bmPt.pointIndex
-        : typeof bmPt.pointNumber === "number"
-          ? bmPt.pointNumber
-          : 0;
-
-    const prev = hoverBmRef.current;
-    if (
-      prev &&
-      prev.curveNumber === bmPt.curveNumber &&
-      prev.pointIndex === idx
-    ) {
-      return; // already enlarged — skip restyle thrash while moving on the diamond
-    }
-
-    const sizes = Array.from({ length: count }, () => BOOKMARK_SIZE);
-    if (idx >= 0 && idx < count) sizes[idx] = BOOKMARK_HOVER_SIZE;
-
-    const gd = graphDivRef.current;
-    if (!gd) return;
-
-    void import("plotly.js/dist/plotly").then((mod) => {
-      const Plotly = getPlotlyApi(mod);
-      if (prev && prev.curveNumber !== bmPt.curveNumber) {
-        void Plotly.restyle(
-          gd,
-          {
-            "marker.size": [
-              Array.from({ length: prev.count }, () => BOOKMARK_SIZE),
-            ],
-          },
-          [prev.curveNumber],
-        );
-      }
-      hoverBmRef.current = {
-        curveNumber: bmPt.curveNumber,
-        count,
-        pointIndex: idx,
-      };
-      void Plotly.restyle(gd, { "marker.size": [sizes] }, [bmPt.curveNumber]);
-    });
-  };
-
-  const handleUnhover = () => {
-    resetBookmarkHover();
-  };
-
   const handleClick = (e: Readonly<PlotMouseEvent>) => {
     if (!onTimePick) return;
+    if (Date.now() < suppressClicksUntilRef.current) return;
     const points = e.points ?? [];
     if (!points.length) return;
 
@@ -787,7 +714,7 @@ export function SensorPlot({
   }
 
   // Remount only when the set of trials / view mode changes — not on bookmark edits.
-  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}`;
+  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}`;
 
   return (
     <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
@@ -815,8 +742,6 @@ export function SensorPlot({
           graphDivRef.current = gd;
         }}
         onClick={handleClick}
-        onHover={handleHover}
-        onUnhover={handleUnhover}
       />
     </div>
   );

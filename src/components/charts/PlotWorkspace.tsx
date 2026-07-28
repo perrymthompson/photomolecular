@@ -1,7 +1,7 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
 import {
   PlotBookmarkAdd,
   type BookmarkPrefill,
@@ -60,6 +60,7 @@ export function PlotWorkspace() {
   const [view, setView] = useState<"combined" | "ah" | "rh" | "temp">("combined");
   const [showSmooth, setShowSmooth] = useState(true);
   const [showBookmarks, setShowBookmarks] = useState(true);
+  const [fullResolution, setFullResolution] = useState(false);
   const [loading, setLoading] = useState(false);
   const [plotBusy, setPlotBusy] = useState(false);
   const [plotRevision, setPlotRevision] = useState(0);
@@ -177,6 +178,11 @@ export function PlotWorkspace() {
     bumpPlot();
   };
 
+  const setFullResolutionAndRefresh = (next: boolean) => {
+    setFullResolution(next);
+    bumpPlot();
+  };
+
   const plotHeight = mode === "aligned" || view !== "combined" ? 480 : 720;
 
   return (
@@ -263,6 +269,14 @@ export function PlotWorkspace() {
             title="Toggle time bookmark markers"
           />
 
+          <ToggleGroup
+            labelOn="Full res"
+            labelOff="Sampled"
+            on={fullResolution}
+            onChange={setFullResolutionAndRefresh}
+            title="Sampled: ~1800 evenly spaced points per trial (faster). Full res: every CSV row."
+          />
+
           {loading || plotBusy ? (
             <span className="flex items-center gap-2 text-xs text-[#8a8a8d]">
               <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#4C8FD1] border-t-transparent" />
@@ -277,7 +291,9 @@ export function PlotWorkspace() {
           </p>
         ) : null}
 
-        <div className="relative">
+        <div
+          className={`relative ${loading || plotBusy ? "pointer-events-none" : ""}`}
+        >
           {(loading || plotBusy) && visibleSeries.length > 0 ? (
             <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-[#1e1f22]/70 backdrop-blur-[1px]">
               <span className="flex items-center gap-2 text-sm text-[#e8e8e8]">
@@ -296,6 +312,7 @@ export function PlotWorkspace() {
               plotRevision={plotRevision}
               showSmooth={showSmooth}
               showBookmarks={showBookmarks}
+              fullResolution={fullResolution}
               onTimePick={({ trialId, time }) => {
                 setBookmarkPrefill({
                   trialId,
@@ -318,16 +335,18 @@ export function PlotWorkspace() {
             series={visibleSeries}
             prefill={bookmarkPrefill}
             onSaved={(updated) => {
-              setTrials((prev) =>
-                sortTrials(prev.map((t) => (t.id === updated.id ? updated : t))),
-              );
-              setSeries((prev) =>
-                prev.map((s) =>
-                  s.meta.id === updated.id ? { ...s, meta: updated } : s,
-                ),
-              );
-              // Do not bump plotRevision — that remounted the whole Plotly chart.
-              // Bookmark traces update cheaply from the new series meta.
+              startTransition(() => {
+                setTrials((prev) =>
+                  sortTrials(
+                    prev.map((t) => (t.id === updated.id ? updated : t)),
+                  ),
+                );
+                setSeries((prev) =>
+                  prev.map((s) =>
+                    s.meta.id === updated.id ? { ...s, meta: updated } : s,
+                  ),
+                );
+              });
             }}
           />
         ) : null}
