@@ -34,7 +34,15 @@
  */
 
 import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
-import type { Data, Layout, LayoutAxis, PlotMouseEvent, Shape } from "plotly.js";
+import type {
+  Data,
+  Datum,
+  Layout,
+  LayoutAxis,
+  PlotDatum,
+  PlotMouseEvent,
+  Shape,
+} from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
@@ -66,15 +74,16 @@ type Props = {
 
 type CurveMeta = {
   trialId: string;
-  kind: "raw" | "smooth" | "bookmark" | "highlight";
+  kind: "raw" | "smooth" | "bookmark";
   color: string;
 };
 
-type HoverBookmark = {
-  x: string | number;
-  y: number;
-  color: string;
-  text: string;
+const BOOKMARK_SIZE = 11;
+const BOOKMARK_HOVER_SIZE = 18;
+
+type BookmarkHover = {
+  trialId: string;
+  pointIndex: number;
 };
 
 /** Pick the numeric y-value for a metric from one sample point. */
@@ -108,7 +117,7 @@ function bookmarkX(
   return (Date.parse(iso) - Date.parse(sessionStart)) / 60000;
 }
 
-/** Format a Date as HH:MM:SS in UTC (matches how we store sample clocks). */
+/** Format a Date as HH:MM:SS in UTC (matches CSV / bookmark clock). */
 function formatClockUtc(d: Date): string {
   const hh = String(d.getUTCHours()).padStart(2, "0");
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
@@ -119,6 +128,7 @@ function formatClockUtc(d: Date): string {
 /**
  * Convert a Plotly x value into HH:MM:SS for the bookmark form.
  * Calendar: x is ISO/Date. Aligned: x is minutes since session start.
+ * Always UTC clock digits so pasted time matches hover customdata / CSV.
  */
 function xToClockTime(
   x: string | number | Date,
@@ -140,6 +150,105 @@ function xToClockTime(
   else ms = Date.parse(String(x));
   if (!Number.isFinite(ms)) return null;
   return formatClockUtc(new Date(ms));
+}
+
+type AxisPixels = LayoutAxis & {
+  _offset?: number;
+  p2d?: (pixel: number) => number | string | Date;
+};
+
+/** Map a Plotly datum to pixel coords inside the plot div. */
+function datumToPixels(pt: PlotDatum): { x: number; y: number } | null {
+  const xa = pt.xaxis as AxisPixels;
+  const ya = pt.yaxis as AxisPixels;
+  if (typeof xa?.l2p !== "function" || typeof ya?.l2p !== "function") return null;
+  try {
+    const x = (xa._offset ?? 0) + xa.l2p(pt.x as Datum);
+    const y = (ya._offset ?? 0) + ya.l2p(pt.y as Datum);
+    if (!Number.isFinite(x) || !Number.isFinite(y)) return null;
+    return { x, y };
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * X at the cursor / hover spike — same time the unified hover label uses.
+ * Do NOT use the nearest curve's sample x (that can be a different second).
+ */
+function spikeXFromEvent(
+  points: PlotDatum[],
+  event: MouseEvent,
+): string | number | Date | null {
+  const pt0 = points[0];
+  if (!pt0) return null;
+
+  const xa = pt0.xaxis as AxisPixels;
+  const plotEl = (event.target as HTMLElement | null)?.closest?.(
+    ".js-plotly-plot",
+  ) as HTMLElement | null;
+  const rect = plotEl?.getBoundingClientRect();
+  if (rect && typeof xa.p2d === "function") {
+    try {
+      const mx = event.clientX - rect.left - (xa._offset ?? 0);
+      const x = xa.p2d(mx);
+      if (x !== undefined && x !== null && x !== "") return x as string | number | Date;
+    } catch {
+      /* fall through */
+    }
+  }
+  // Fallback: first point in the unified-x event (hover spike).
+  return pt0.x as string | number | Date;
+}
+
+/**
+ * With hovermode "x unified", a click returns EVERY trial at that time.
+ * Pick the curve nearest the cursor in Y (time comes from spikeX separately).
+ */
+function pickNearestTrialPoint(
+  points: PlotDatum[],
+  event: MouseEvent,
+  curveMeta: CurveMeta[],
+): PlotDatum | null {
+  if (!points.length) return null;
+
+  const plotEl = (event.target as HTMLElement | null)?.closest?.(
+    ".js-plotly-plot",
+  ) as HTMLElement | null;
+  const rect = plotEl?.getBoundingClientRect();
+  const my = event.clientY - (rect?.top ?? 0);
+
+  const preferred = points.filter((p) => {
+    const m = curveMeta[p.curveNumber];
+    return m && (m.kind === "raw" || m.kind === "bookmark") && m.trialId;
+  });
+  const pool = preferred.length > 0 ? preferred : points;
+
+  let best: PlotDatum | null = null;
+  let bestDist = Infinity;
+  for (const pt of pool) {
+    const pix = datumToPixels(pt);
+    if (!pix) continue;
+    const dist = Math.abs(pix.y - my);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = pt;
+    }
+  }
+
+  return best ?? pool[0] ?? null;
+}
+
+function paddedRange(vals: number[]): [number, number] {
+  if (vals.length === 0) return [0, 1];
+  let lo = vals[0];
+  let hi = vals[0];
+  for (const v of vals) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.06 || 0.1;
+  return [lo - pad, hi + pad];
 }
 
 export function SensorPlot({
@@ -164,8 +273,8 @@ export function SensorPlot({
     onUnhover?: (e: Readonly<PlotMouseEvent>) => void;
   }> | null>(null);
 
-  const [hoverBm, setHoverBm] = useState<HoverBookmark | null>(null);
   const curveMetaRef = useRef<CurveMeta[]>([]);
+  const [bmHover, setBmHover] = useState<BookmarkHover | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -183,10 +292,9 @@ export function SensorPlot({
     };
   }, [series.length]);
 
-  // Clear hover highlight when bookmarks are hidden or data changes.
   useEffect(() => {
-    setHoverBm(null);
-  }, [showBookmarks, series, mode, metrics, plotRevision]);
+    setBmHover(null);
+  }, [showBookmarks, series, mode, metrics, plotRevision, showSmooth]);
 
   // One distinct color per trial id (not per "ch1" label — labels can collide).
   const colors = useMemo(
@@ -211,6 +319,7 @@ export function SensorPlot({
     const meta: CurveMeta[] = [];
     const shapes: Partial<Shape>[] = [];
     const n = metrics.length;
+    const metricValues: number[][] = metrics.map(() => []);
 
     series.forEach((s) => {
       const color = colors[s.meta.id] ?? "#888";
@@ -229,6 +338,7 @@ export function SensorPlot({
         const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
         const xsCal = s.points.map((p) => p.time);
         const ys = s.points.map((p) => metricValue(p, metric));
+        metricValues[mi].push(...ys);
 
         // X values: ISO strings (clock) OR minutes since session start (aligned).
         let xs: (string | number)[] = xsCal;
@@ -237,6 +347,11 @@ export function SensorPlot({
           const t0 = Date.parse(startIso);
           xs = s.points.map((p) => (Date.parse(p.time) - t0) / 60000);
         }
+
+        // UTC clock in hover (= CSV clock) so click paste matches the tooltip.
+        const clockLabels = s.points.map((p) =>
+          formatClockUtc(new Date(p.time)),
+        );
 
         // Raw data — thicker/more opaque when smooth is off so the series stays readable.
         traces.push({
@@ -247,13 +362,14 @@ export function SensorPlot({
           showlegend: mi === 0,
           x: xs,
           y: ys,
+          customdata: clockLabels,
           yaxis: axisY,
           line: { color, width: showSmooth ? 1 : 2 },
           opacity: showSmooth ? 0.35 : 0.9,
           hovertemplate:
             mode === "aligned"
               ? `%{x:.1f} min<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`
-              : `%{x|%H:%M:%S}<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`,
+              : `%{customdata}<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`,
         });
         meta.push({ trialId: s.meta.id, kind: "raw", color });
 
@@ -332,6 +448,12 @@ export function SensorPlot({
               ? firstYs.reduce((a, v) => a + v, 0) / firstYs.length
               : 0;
 
+          const sizes = bx.map((_, i) =>
+            bmHover?.trialId === s.meta.id && bmHover.pointIndex === i
+              ? BOOKMARK_HOVER_SIZE
+              : BOOKMARK_SIZE,
+          );
+
           traces.push({
             type: "scatter",
             mode: "markers",
@@ -341,11 +463,13 @@ export function SensorPlot({
             x: bx,
             y: bx.map(() => midY),
             yaxis: "y",
+            // Keep enlarged diamonds from affecting / clipping axis layout.
+            cliponaxis: false,
             marker: {
               symbol: "diamond",
-              size: 11,
+              size: sizes,
               color,
-              line: { width: 1, color: "#ffffff" },
+              line: { width: 1.5, color: "#ffffff" },
             },
             text: texts,
             hovertemplate: `%{text}<extra>${name}</extra>`,
@@ -354,32 +478,6 @@ export function SensorPlot({
         }
       }
     });
-
-    // Hovered bookmark drawn last so it floats above overlapping diamonds.
-    if (hoverBm && showBookmarks) {
-      traces.push({
-        type: "scatter",
-        mode: "markers",
-        name: "bookmark highlight",
-        showlegend: false,
-        x: [hoverBm.x],
-        y: [hoverBm.y],
-        yaxis: "y",
-        marker: {
-          symbol: "diamond",
-          size: 18,
-          color: hoverBm.color,
-          line: { width: 2.5, color: "#ffffff" },
-        },
-        text: [hoverBm.text],
-        hovertemplate: `%{text}<extra></extra>`,
-      });
-      meta.push({
-        trialId: "",
-        kind: "highlight",
-        color: hoverBm.color,
-      });
-    }
 
     // Aligned mode: dotted line at x=0 (session start for every trial).
     if (mode === "aligned") {
@@ -396,6 +494,7 @@ export function SensorPlot({
     }
 
     // Stacked y-axis domains (Combined view = 3 panels with small gaps).
+    // Lock ranges so bookmark hover size changes cannot shift the grid.
     const domainH = 1 / n;
     const gap = 0.06;
     const yAxes: Record<string, Partial<LayoutAxis>> = {};
@@ -413,6 +512,8 @@ export function SensorPlot({
         zeroline: false,
         tickfont: { color: DARK_THEME.subtext, size: 10 },
         automargin: true,
+        autorange: false,
+        range: paddedRange(metricValues[mi]),
       };
     });
 
@@ -469,6 +570,7 @@ export function SensorPlot({
       },
       margin: { t: notes ? 72 : 56, r: 24, b: 56, l: 72 },
       hovermode: "x unified",
+      uirevision: "sensor-plot",
       shapes,
       xaxis: {
         title: {
@@ -490,16 +592,7 @@ export function SensorPlot({
     };
 
     return { data: traces, layout: layoutObj, meta };
-  }, [
-    series,
-    mode,
-    metrics,
-    colors,
-    height,
-    showSmooth,
-    showBookmarks,
-    hoverBm,
-  ]);
+  }, [series, mode, metrics, colors, height, showSmooth, showBookmarks, bmHover]);
 
   curveMetaRef.current = meta;
 
@@ -509,26 +602,21 @@ export function SensorPlot({
       (p) => curveMetaRef.current[p.curveNumber]?.kind === "bookmark",
     );
     if (!bmPt) {
-      setHoverBm(null);
+      setBmHover(null);
       return;
     }
     const m = curveMetaRef.current[bmPt.curveNumber]!;
-    const text =
-      typeof bmPt.text === "string"
-        ? bmPt.text
-        : Array.isArray(bmPt.text)
-          ? String(bmPt.text[0] ?? "")
-          : "";
-    setHoverBm({
-      x: bmPt.x as string | number,
-      y: typeof bmPt.y === "number" ? bmPt.y : Number(bmPt.y),
-      color: m.color,
-      text,
-    });
+    const idx =
+      typeof bmPt.pointIndex === "number"
+        ? bmPt.pointIndex
+        : typeof bmPt.pointNumber === "number"
+          ? bmPt.pointNumber
+          : 0;
+    setBmHover({ trialId: m.trialId, pointIndex: idx });
   };
 
   const handleUnhover = () => {
-    setHoverBm(null);
+    setBmHover(null);
   };
 
   const handleClick = (e: Readonly<PlotMouseEvent>) => {
@@ -536,21 +624,24 @@ export function SensorPlot({
     const points = e.points ?? [];
     if (!points.length) return;
 
-    // Prefer bookmark → raw curve so the selected trial matches what you clicked.
-    const pt =
-      points.find(
-        (p) => curveMetaRef.current[p.curveNumber]?.kind === "bookmark",
-      ) ??
-      points.find(
-        (p) => curveMetaRef.current[p.curveNumber]?.kind === "raw",
-      ) ??
-      points[0];
+    // Trial = curve nearest the cursor in Y among points at this spike.
+    const pt = pickNearestTrialPoint(points, e.event, curveMetaRef.current);
+    if (!pt) return;
 
     const m = curveMetaRef.current[pt.curveNumber];
-    if (!m || m.kind === "highlight" || !m.trialId) return;
+    if (!m || !m.trialId) return;
 
-    const startIso = sessionByTrial.get(m.trialId) ?? null;
-    const time = xToClockTime(pt.x as string | number | Date, mode, startIso);
+    // Time = hover spike x (cursor), not a nearby sample that won the 2D nearest race.
+    // Prefer the hovered curve's UTC customdata when present (exact tooltip text).
+    let time: string | null = null;
+    if (typeof pt.customdata === "string" && /^\d{2}:\d{2}:\d{2}$/.test(pt.customdata)) {
+      time = pt.customdata;
+    } else {
+      const spikeX = spikeXFromEvent(points, e.event);
+      if (spikeX === null) return;
+      const startIso = sessionByTrial.get(m.trialId) ?? null;
+      time = xToClockTime(spikeX, mode, startIso);
+    }
     if (!time) return;
     onTimePick({ trialId: m.trialId, time });
   };
