@@ -479,8 +479,8 @@ export function SensorPlot({
           yaxis: axisY,
           line: { color, width: showSmooth ? 1 : 2 },
           opacity: showSmooth ? 0.35 : 0.9,
-          // We render our own single-bubble hover overlay (less clutter).
-          hoverinfo: "skip",
+          // Hide Plotly's built-in label, but still emit hover events.
+          hoverinfo: "none",
         });
         meta.push({
           trialId: s.meta.id,
@@ -637,7 +637,7 @@ export function SensorPlot({
           line: { width: 1.5, color: "#ffffff" },
         },
         text: texts,
-        hoverinfo: "skip",
+        hoverinfo: "none",
       });
       meta.push({
         trialId: s.meta.id,

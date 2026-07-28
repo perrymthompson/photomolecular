@@ -1,7 +1,14 @@
 "use client";
 
 import dynamic from "next/dynamic";
-import { startTransition, useCallback, useEffect, useMemo, useState } from "react";
+import {
+  startTransition,
+  useCallback,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import {
   PlotBookmarkAdd,
   type BookmarkPrefill,
@@ -9,6 +16,20 @@ import {
 import { TrialSelector } from "@/components/charts/TrialSelector";
 import { selectionSpansMultipleRuns, sortTrials } from "@/lib/trial-sort";
 import type { MetricKey, PlotMode, TrialMeta, TrialSeries } from "@/types/trial";
+
+const PLOT_WORKSPACE_STORAGE_KEY = "plot-workspace-state-v1";
+
+type PlotView = "combined" | "ah" | "rh" | "temp";
+
+type PersistedPlotWorkspaceState = {
+  selectedIds?: string[];
+  mode?: PlotMode;
+  view?: PlotView;
+  showSmooth?: boolean;
+  showBookmarks?: boolean;
+  fullResolution?: boolean;
+  modeTouched?: boolean;
+};
 
 const SensorPlot = dynamic(
   () => import("@/components/charts/SensorPlot").then((mod) => mod.SensorPlot),
@@ -57,7 +78,7 @@ export function PlotWorkspace() {
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [series, setSeries] = useState<TrialSeries[]>([]);
   const [mode, setMode] = useState<PlotMode>("calendar");
-  const [view, setView] = useState<"combined" | "ah" | "rh" | "temp">("combined");
+  const [view, setView] = useState<PlotView>("combined");
   const [showSmooth, setShowSmooth] = useState(true);
   const [showBookmarks, setShowBookmarks] = useState(true);
   const [fullResolution, setFullResolution] = useState(false);
@@ -69,6 +90,47 @@ export function PlotWorkspace() {
   const [bookmarkPrefill, setBookmarkPrefill] = useState<BookmarkPrefill | null>(
     null,
   );
+  const restoredSelectedIdsRef = useRef<string[] | null>(null);
+  const storageReadyRef = useRef(false);
+  const skipFirstPersistRef = useRef(true);
+
+  useEffect(() => {
+    try {
+      const raw = window.sessionStorage.getItem(PLOT_WORKSPACE_STORAGE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as PersistedPlotWorkspaceState;
+      if (parsed.mode === "calendar" || parsed.mode === "aligned") {
+        setMode(parsed.mode);
+      }
+      if (
+        parsed.view === "combined" ||
+        parsed.view === "ah" ||
+        parsed.view === "rh" ||
+        parsed.view === "temp"
+      ) {
+        setView(parsed.view);
+      }
+      if (typeof parsed.showSmooth === "boolean") setShowSmooth(parsed.showSmooth);
+      if (typeof parsed.showBookmarks === "boolean") {
+        setShowBookmarks(parsed.showBookmarks);
+      }
+      if (typeof parsed.fullResolution === "boolean") {
+        setFullResolution(parsed.fullResolution);
+      }
+      if (typeof parsed.modeTouched === "boolean") {
+        setModeTouched(parsed.modeTouched);
+      } else if (parsed.mode) {
+        setModeTouched(true);
+      }
+      if (Array.isArray(parsed.selectedIds)) {
+        restoredSelectedIdsRef.current = parsed.selectedIds;
+      }
+    } catch {
+      // Ignore corrupted persisted state and fall back to defaults.
+    } finally {
+      storageReadyRef.current = true;
+    }
+  }, []);
 
   useEffect(() => {
     fetch("/api/trials")
@@ -89,11 +151,39 @@ export function PlotWorkspace() {
       .then((data) => {
         setTrials(data);
         if (data.length) {
-          setSelectedIds(data.slice(0, Math.min(2, data.length)).map((t) => t.id));
+          const restoredIds = (restoredSelectedIdsRef.current ?? []).filter((id) =>
+            data.some((t) => t.id === id),
+          );
+          setSelectedIds(
+            restoredIds.length
+              ? restoredIds
+              : data.slice(0, Math.min(2, data.length)).map((t) => t.id),
+          );
         }
       })
       .catch((e) => setError(String(e)));
   }, []);
+
+  useEffect(() => {
+    if (!storageReadyRef.current) return;
+    if (skipFirstPersistRef.current) {
+      skipFirstPersistRef.current = false;
+      return;
+    }
+    const next: PersistedPlotWorkspaceState = {
+      selectedIds,
+      mode,
+      view,
+      showSmooth,
+      showBookmarks,
+      fullResolution,
+      modeTouched,
+    };
+    window.sessionStorage.setItem(
+      PLOT_WORKSPACE_STORAGE_KEY,
+      JSON.stringify(next),
+    );
+  }, [selectedIds, mode, view, showSmooth, showBookmarks, fullResolution, modeTouched]);
 
   const loadSeries = useCallback(async (ids: string[]) => {
     if (!ids.length) {
