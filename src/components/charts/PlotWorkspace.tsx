@@ -326,7 +326,8 @@ export function PlotWorkspace() {
                   s.meta.id === updated.id ? { ...s, meta: updated } : s,
                 ),
               );
-              setPlotRevision((n) => n + 1);
+              // Do not bump plotRevision — that remounted the whole Plotly chart.
+              // Bookmark traces update cheaply from the new series meta.
             }}
           />
         ) : null}

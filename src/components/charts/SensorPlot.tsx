@@ -76,15 +76,35 @@ type CurveMeta = {
   trialId: string;
   kind: "raw" | "smooth" | "bookmark";
   color: string;
+  bookmarkCount?: number;
 };
 
 const BOOKMARK_SIZE = 11;
 const BOOKMARK_HOVER_SIZE = 18;
 
-type BookmarkHover = {
-  trialId: string;
-  pointIndex: number;
-};
+/** Stable fingerprint of sensor points (ignores bookmark/notes edits). */
+function pointsFingerprint(series: TrialSeries[]): string {
+  return series
+    .map((s) => {
+      const first = s.points[0]?.time ?? "";
+      const last = s.points[s.points.length - 1]?.time ?? "";
+      return `${s.meta.id}:${s.points.length}:${first}:${last}:${s.meta.sessionStartTime ?? ""}`;
+    })
+    .join("|");
+}
+
+function bookmarksFingerprint(series: TrialSeries[]): string {
+  return series
+    .map((s) => {
+      const bms = s.meta.bookmarks ?? [];
+      return `${s.meta.id}:${bms.map((b) => `${b.id}:${b.time}:${b.note}`).join(",")}`;
+    })
+    .join("|");
+}
+
+function notesFingerprint(series: TrialSeries[]): string {
+  return series.map((s) => `${s.meta.id}:${s.meta.notes ?? ""}`).join("|");
+}
 
 /** Pick the numeric y-value for a metric from one sample point. */
 function metricValue(p: TrialSeries["points"][0], key: MetricKey): number {
@@ -251,6 +271,18 @@ function paddedRange(vals: number[]): [number, number] {
   return [lo - pad, hi + pad];
 }
 
+function getPlotlyApi(
+  mod: typeof import("plotly.js/dist/plotly"),
+): {
+  restyle: (
+    graphDiv: unknown,
+    update: Record<string, unknown>,
+    traces?: number | number[],
+  ) => Promise<unknown>;
+} {
+  return mod.default ?? mod;
+}
+
 export function SensorPlot({
   series,
   mode,
@@ -268,13 +300,30 @@ export function SensorPlot({
     config: Record<string, unknown>;
     style: Record<string, string | number>;
     useResizeHandler?: boolean;
+    revision?: number;
+    onInitialized?: (figure: unknown, graphDiv: HTMLElement) => void;
+    onUpdate?: (figure: unknown, graphDiv: HTMLElement) => void;
     onClick?: (e: Readonly<PlotMouseEvent>) => void;
     onHover?: (e: Readonly<PlotMouseEvent>) => void;
     onUnhover?: (e: Readonly<PlotMouseEvent>) => void;
   }> | null>(null);
 
   const curveMetaRef = useRef<CurveMeta[]>([]);
-  const [bmHover, setBmHover] = useState<BookmarkHover | null>(null);
+  const graphDivRef = useRef<HTMLElement | null>(null);
+  const hoverBmRef = useRef<{
+    curveNumber: number;
+    count: number;
+    pointIndex: number;
+  } | null>(null);
+  const lowessCacheRef = useRef(
+    new Map<string, { x: number[]; y: number[] }>(),
+  );
+  const seriesRef = useRef(series);
+  seriesRef.current = series;
+
+  const pointsKey = useMemo(() => pointsFingerprint(series), [series]);
+  const bookmarksKey = useMemo(() => bookmarksFingerprint(series), [series]);
+  const notesKey = useMemo(() => notesFingerprint(series), [series]);
 
   useEffect(() => {
     let cancelled = false;
@@ -292,17 +341,17 @@ export function SensorPlot({
     };
   }, [series.length]);
 
+  // Drop LOWESS cache when the underlying samples change.
   useEffect(() => {
-    setBmHover(null);
-  }, [showBookmarks, series, mode, metrics, plotRevision, showSmooth]);
+    lowessCacheRef.current.clear();
+    hoverBmRef.current = null;
+  }, [pointsKey, mode, showSmooth]);
 
-  // One distinct color per trial id (not per "ch1" label — labels can collide).
   const colors = useMemo(
     () => trialColorMapById(series.map((s) => ({ id: s.meta.id, label: s.meta.label }))),
     [series],
   );
 
-  // sessionStartIso per trial — used when converting aligned-mode clicks → clock.
   const sessionByTrial = useMemo(() => {
     const map = new Map<string, string | null>();
     for (const s of series) {
@@ -314,46 +363,44 @@ export function SensorPlot({
     return map;
   }, [series]);
 
-  const { data, layout, meta } = useMemo(() => {
+  /**
+   * Expensive layer: raw + LOWESS traces and y-axis ranges.
+   * Intentionally ignores bookmark hover / bookmark list edits.
+   */
+  const base = useMemo(() => {
+    const current = seriesRef.current;
     const traces: Data[] = [];
     const meta: CurveMeta[] = [];
     const shapes: Partial<Shape>[] = [];
     const n = metrics.length;
     const metricValues: number[][] = metrics.map(() => []);
 
-    series.forEach((s) => {
+    current.forEach((s) => {
       const color = colors[s.meta.id] ?? "#888";
       const group = s.meta.id;
       const name = legendName(s);
-
-      // Session start = first sample's calendar date + meta.sessionStartTime.
       const startIso = sessionStartIso(
         s.points[0]?.time,
         s.meta.sessionStartTime,
       );
 
-      // ---- Sensor metric traces (raw faint + optional LOWESS thick) -------
       metrics.forEach((metric, mi) => {
-        // Stacked panels: first metric uses "y", then "y2", "y3", …
         const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
         const xsCal = s.points.map((p) => p.time);
         const ys = s.points.map((p) => metricValue(p, metric));
         metricValues[mi].push(...ys);
 
-        // X values: ISO strings (clock) OR minutes since session start (aligned).
         let xs: (string | number)[] = xsCal;
         if (mode === "aligned") {
-          if (!startIso) return; // cannot align without session start
+          if (!startIso) return;
           const t0 = Date.parse(startIso);
           xs = s.points.map((p) => (Date.parse(p.time) - t0) / 60000);
         }
 
-        // UTC clock in hover (= CSV clock) so click paste matches the tooltip.
         const clockLabels = s.points.map((p) =>
           formatClockUtc(new Date(p.time)),
         );
 
-        // Raw data — thicker/more opaque when smooth is off so the series stays readable.
         traces.push({
           type: "scatter",
           mode: "lines",
@@ -374,12 +421,16 @@ export function SensorPlot({
         meta.push({ trialId: s.meta.id, kind: "raw", color });
 
         if (showSmooth) {
-          // LOWESS smooth — span 0.08 of points (same idea as R loess span).
           const xNum =
             mode === "aligned"
               ? (xs as number[])
               : xsCal.map((t) => Date.parse(t));
-          const smooth = lowess(xNum, ys, LOWESS_SPAN);
+          const cacheKey = `${s.meta.id}|${metric}|${mode}|${xNum.length}|${xNum[0]}|${xNum[xNum.length - 1]}`;
+          let smooth = lowessCacheRef.current.get(cacheKey);
+          if (!smooth) {
+            smooth = lowess(xNum, ys, LOWESS_SPAN);
+            lowessCacheRef.current.set(cacheKey, smooth);
+          }
           const smoothX =
             mode === "aligned"
               ? smooth.x
@@ -395,12 +446,11 @@ export function SensorPlot({
             y: smooth.y,
             yaxis: axisY,
             line: { color, width: 2.4 },
-            hoverinfo: "skip", // hover shows raw points only
+            hoverinfo: "skip",
           });
           meta.push({ trialId: s.meta.id, kind: "smooth", color });
         }
 
-        // Dashed vertical line at session start (clock mode, once per trial).
         if (mode === "calendar" && startIso && mi === 0) {
           shapes.push({
             type: "line",
@@ -414,72 +464,8 @@ export function SensorPlot({
           });
         }
       });
-
-      // ---- Time bookmarks (hoverable markers + light vertical lines) ------
-      const bookmarks = showBookmarks ? (s.meta.bookmarks ?? []) : [];
-      if (bookmarks.length > 0) {
-        const bx: (string | number)[] = [];
-        const texts: string[] = [];
-
-        for (const b of bookmarks) {
-          const x = bookmarkX(s.points[0]?.time, b.time, mode, startIso);
-          if (x === null) continue;
-          bx.push(x);
-          texts.push(`${b.time} — ${b.note}`);
-
-          // Soft vertical guide at the bookmark time.
-          shapes.push({
-            type: "line",
-            xref: "x",
-            yref: "paper",
-            x0: x,
-            x1: x,
-            y0: 0,
-            y1: 1,
-            line: { color, width: 1, dash: "dot" },
-            opacity: 0.55,
-          });
-        }
-
-        if (bx.length > 0) {
-          const firstYs = s.points.map((p) => metricValue(p, metrics[0]));
-          const midY =
-            firstYs.length > 0
-              ? firstYs.reduce((a, v) => a + v, 0) / firstYs.length
-              : 0;
-
-          const sizes = bx.map((_, i) =>
-            bmHover?.trialId === s.meta.id && bmHover.pointIndex === i
-              ? BOOKMARK_HOVER_SIZE
-              : BOOKMARK_SIZE,
-          );
-
-          traces.push({
-            type: "scatter",
-            mode: "markers",
-            name: `${name} bookmarks`,
-            legendgroup: group,
-            showlegend: false,
-            x: bx,
-            y: bx.map(() => midY),
-            yaxis: "y",
-            // Keep enlarged diamonds from affecting / clipping axis layout.
-            cliponaxis: false,
-            marker: {
-              symbol: "diamond",
-              size: sizes,
-              color,
-              line: { width: 1.5, color: "#ffffff" },
-            },
-            text: texts,
-            hovertemplate: `%{text}<extra>${name}</extra>`,
-          });
-          meta.push({ trialId: s.meta.id, kind: "bookmark", color });
-        }
-      }
     });
 
-    // Aligned mode: dotted line at x=0 (session start for every trial).
     if (mode === "aligned") {
       shapes.push({
         type: "line",
@@ -493,8 +479,6 @@ export function SensorPlot({
       });
     }
 
-    // Stacked y-axis domains (Combined view = 3 panels with small gaps).
-    // Lock ranges so bookmark hover size changes cannot shift the grid.
     const domainH = 1 / n;
     const gap = 0.06;
     const yAxes: Record<string, Partial<LayoutAxis>> = {};
@@ -517,13 +501,95 @@ export function SensorPlot({
       };
     });
 
-    // Trial-level notes (not bookmarks) shown as a subtitle annotation.
-    const notes = series
+    return { traces, meta, shapes, yAxes, n };
+    // pointsKey stands in for series samples; colors keyed by trial ids in pointsKey.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [pointsKey, mode, metrics, colors, showSmooth]);
+
+  /** Cheap layer: bookmark markers + guide lines only. */
+  const bookmarkLayer = useMemo(() => {
+    const current = seriesRef.current;
+    const traces: Data[] = [];
+    const meta: CurveMeta[] = [];
+    const shapes: Partial<Shape>[] = [];
+    if (!showBookmarks) return { traces, meta, shapes };
+
+    current.forEach((s) => {
+      const color = colors[s.meta.id] ?? "#888";
+      const name = legendName(s);
+      const startIso = sessionStartIso(
+        s.points[0]?.time,
+        s.meta.sessionStartTime,
+      );
+      const bookmarks = s.meta.bookmarks ?? [];
+      if (!bookmarks.length) return;
+
+      const bx: (string | number)[] = [];
+      const texts: string[] = [];
+      for (const b of bookmarks) {
+        const x = bookmarkX(s.points[0]?.time, b.time, mode, startIso);
+        if (x === null) continue;
+        bx.push(x);
+        texts.push(`${b.time} — ${b.note}`);
+        shapes.push({
+          type: "line",
+          xref: "x",
+          yref: "paper",
+          x0: x,
+          x1: x,
+          y0: 0,
+          y1: 1,
+          line: { color, width: 1, dash: "dot" },
+          opacity: 0.55,
+        });
+      }
+      if (!bx.length) return;
+
+      const firstYs = s.points.map((p) => metricValue(p, metrics[0]));
+      const midY =
+        firstYs.length > 0
+          ? firstYs.reduce((a, v) => a + v, 0) / firstYs.length
+          : 0;
+
+      traces.push({
+        type: "scatter",
+        mode: "markers",
+        name: `${name} bookmarks`,
+        legendgroup: s.meta.id,
+        showlegend: false,
+        x: bx,
+        y: bx.map(() => midY),
+        yaxis: "y",
+        cliponaxis: false,
+        marker: {
+          symbol: "diamond",
+          size: BOOKMARK_SIZE,
+          color,
+          line: { width: 1.5, color: "#ffffff" },
+        },
+        text: texts,
+        hovertemplate: `%{text}<extra>${name}</extra>`,
+      });
+      meta.push({
+        trialId: s.meta.id,
+        kind: "bookmark",
+        color,
+        bookmarkCount: bx.length,
+      });
+    });
+
+    return { traces, meta, shapes };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [bookmarksKey, showBookmarks, mode, metrics, colors, pointsKey]);
+
+  const layout = useMemo(() => {
+    const current = seriesRef.current;
+    const notes = current
       .filter((s) => s.meta.notes?.trim())
       .map((s) => `${legendName(s)}: ${s.meta.notes.trim()}`)
       .join("   |   ");
 
-    const dateLabels = uniqueDateLabels(series.map((s) => s.meta));
+    const dateLabels = uniqueDateLabels(current.map((s) => s.meta));
     const datePart =
       dateLabels.length === 0
         ? null
@@ -571,7 +637,7 @@ export function SensorPlot({
       margin: { t: notes ? 72 : 56, r: 24, b: 56, l: 72 },
       hovermode: "x unified",
       uirevision: "sensor-plot",
-      shapes,
+      shapes: [...base.shapes, ...bookmarkLayer.shapes],
       xaxis: {
         title: {
           text:
@@ -582,19 +648,40 @@ export function SensorPlot({
         },
         gridcolor: DARK_THEME.gridMajor,
         tickfont: { color: DARK_THEME.subtext, size: 10 },
-        anchor: (n > 1 ? `y${n}` : "y") as LayoutAxis["anchor"],
+        anchor: (base.n > 1 ? `y${base.n}` : "y") as LayoutAxis["anchor"],
         ...(mode === "calendar"
           ? { type: "date" as const, tickformat: "%H:%M" }
           : {}),
       },
-      ...yAxes,
+      ...base.yAxes,
       height,
     };
+    return layoutObj;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [base, bookmarkLayer, mode, metrics, height, notesKey, pointsKey]);
 
-    return { data: traces, layout: layoutObj, meta };
-  }, [series, mode, metrics, colors, height, showSmooth, showBookmarks, bmHover]);
+  const data = useMemo(
+    () => [...base.traces, ...bookmarkLayer.traces],
+    [base.traces, bookmarkLayer.traces],
+  );
 
-  curveMetaRef.current = meta;
+  // curveNumber order = base traces then bookmark traces
+  curveMetaRef.current = [...base.meta, ...bookmarkLayer.meta];
+
+  const resetBookmarkHover = () => {
+    const prev = hoverBmRef.current;
+    const gd = graphDivRef.current;
+    if (!prev || !gd) return;
+    hoverBmRef.current = null;
+    const sizes = Array.from({ length: prev.count }, () => BOOKMARK_SIZE);
+    void import("plotly.js/dist/plotly").then((mod) => {
+      void getPlotlyApi(mod).restyle(
+        gd,
+        { "marker.size": [sizes] },
+        [prev.curveNumber],
+      );
+    });
+  };
 
   const handleHover = (e: Readonly<PlotMouseEvent>) => {
     const points = e.points ?? [];
@@ -602,21 +689,58 @@ export function SensorPlot({
       (p) => curveMetaRef.current[p.curveNumber]?.kind === "bookmark",
     );
     if (!bmPt) {
-      setBmHover(null);
+      resetBookmarkHover();
       return;
     }
+
     const m = curveMetaRef.current[bmPt.curveNumber]!;
+    const count = m.bookmarkCount ?? 1;
     const idx =
       typeof bmPt.pointIndex === "number"
         ? bmPt.pointIndex
         : typeof bmPt.pointNumber === "number"
           ? bmPt.pointNumber
           : 0;
-    setBmHover({ trialId: m.trialId, pointIndex: idx });
+
+    const prev = hoverBmRef.current;
+    if (
+      prev &&
+      prev.curveNumber === bmPt.curveNumber &&
+      prev.pointIndex === idx
+    ) {
+      return; // already enlarged — skip restyle thrash while moving on the diamond
+    }
+
+    const sizes = Array.from({ length: count }, () => BOOKMARK_SIZE);
+    if (idx >= 0 && idx < count) sizes[idx] = BOOKMARK_HOVER_SIZE;
+
+    const gd = graphDivRef.current;
+    if (!gd) return;
+
+    void import("plotly.js/dist/plotly").then((mod) => {
+      const Plotly = getPlotlyApi(mod);
+      if (prev && prev.curveNumber !== bmPt.curveNumber) {
+        void Plotly.restyle(
+          gd,
+          {
+            "marker.size": [
+              Array.from({ length: prev.count }, () => BOOKMARK_SIZE),
+            ],
+          },
+          [prev.curveNumber],
+        );
+      }
+      hoverBmRef.current = {
+        curveNumber: bmPt.curveNumber,
+        count,
+        pointIndex: idx,
+      };
+      void Plotly.restyle(gd, { "marker.size": [sizes] }, [bmPt.curveNumber]);
+    });
   };
 
   const handleUnhover = () => {
-    setBmHover(null);
+    resetBookmarkHover();
   };
 
   const handleClick = (e: Readonly<PlotMouseEvent>) => {
@@ -624,17 +748,17 @@ export function SensorPlot({
     const points = e.points ?? [];
     if (!points.length) return;
 
-    // Trial = curve nearest the cursor in Y among points at this spike.
     const pt = pickNearestTrialPoint(points, e.event, curveMetaRef.current);
     if (!pt) return;
 
     const m = curveMetaRef.current[pt.curveNumber];
     if (!m || !m.trialId) return;
 
-    // Time = hover spike x (cursor), not a nearby sample that won the 2D nearest race.
-    // Prefer the hovered curve's UTC customdata when present (exact tooltip text).
     let time: string | null = null;
-    if (typeof pt.customdata === "string" && /^\d{2}:\d{2}:\d{2}$/.test(pt.customdata)) {
+    if (
+      typeof pt.customdata === "string" &&
+      /^\d{2}:\d{2}:\d{2}$/.test(pt.customdata)
+    ) {
       time = pt.customdata;
     } else {
       const spikeX = spikeXFromEvent(points, e.event);
@@ -662,12 +786,16 @@ export function SensorPlot({
     );
   }
 
+  // Remount only when the set of trials / view mode changes — not on bookmark edits.
+  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}`;
+
   return (
     <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
       <PlotComponent
-        key={`plot-${plotRevision}-${mode}-${metrics.join("-")}-${showSmooth}-${showBookmarks}-${series.map((s) => s.meta.id).join(",")}`}
+        key={mountKey}
         data={data}
         layout={layout}
+        revision={plotRevision}
         config={{
           responsive: true,
           displaylogo: false,
@@ -680,6 +808,12 @@ export function SensorPlot({
         }}
         style={{ width: "100%", height }}
         useResizeHandler
+        onInitialized={(_fig, gd) => {
+          graphDivRef.current = gd;
+        }}
+        onUpdate={(_fig, gd) => {
+          graphDivRef.current = gd;
+        }}
         onClick={handleClick}
         onHover={handleHover}
         onUnhover={handleUnhover}
