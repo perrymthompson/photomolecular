@@ -1,3 +1,4 @@
+import { sessionStartIso } from "@/lib/parse-csv";
 import type { SensorPoint, TrialBookmark, TrialMeta } from "@/types/trial";
 import {
   clockTimesEqual,
@@ -13,25 +14,53 @@ function formatClockUtc(d: Date): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-/** End clock time for a sibling A/B/C trial (explicit end bookmark, else last CSV sample). */
+/** Resolve bookmark clock onto sibling trial timeline (handles next-day ends). */
+function resolveEndInstant(
+  firstSampleIso: string,
+  clockTime: string,
+): string {
+  let iso = sessionStartIso(firstSampleIso, clockTime);
+  if (!iso) return firstSampleIso;
+  const firstMs = Date.parse(firstSampleIso);
+  const endMs = Date.parse(iso);
+  if (endMs < firstMs) {
+    iso = new Date(endMs + 86_400_000).toISOString();
+  }
+  return iso;
+}
+
+export type SiblingEndMarker = {
+  time: string;
+  plotIso: string;
+};
+
+/** End marker for a sibling A/B/C trial (explicit end bookmark, else last CSV sample). */
 export function endTimeForSiblingTrial(
   runLetter: string,
   meta: TrialMeta,
   points: SensorPoint[],
-): string | null {
+): SiblingEndMarker | null {
+  if (!points.length) return null;
+  const firstIso = points[0].time;
+
   for (const b of meta.bookmarks ?? []) {
     const note = (b.note || "").trim();
     if (!/end/i.test(note) || /start/i.test(note)) continue;
     const m = note.match(/Trial\s+([ABC])\b/i);
     if (m && m[1].toUpperCase() === runLetter) {
-      return normalizeClockTime(b.time);
+      const plotIso = resolveEndInstant(firstIso, b.time);
+      return {
+        time: normalizeClockTime(b.time),
+        plotIso,
+      };
     }
   }
 
-  if (points.length > 0) {
-    return formatClockUtc(new Date(points[points.length - 1].time));
-  }
-  return null;
+  const last = points[points.length - 1];
+  return {
+    time: formatClockUtc(new Date(last.time)),
+    plotIso: last.time,
+  };
 }
 
 /**
@@ -78,15 +107,16 @@ export async function computeXRunDynamicEndBookmarks(
     }
     if (!cached) continue;
 
-    const time = endTimeForSiblingTrial(runLetter, cached.meta, cached.points);
-    if (!time) continue;
+    const end = endTimeForSiblingTrial(runLetter, cached.meta, cached.points);
+    if (!end) continue;
 
-    if (stored.some((b) => clockTimesEqual(b.time, time))) continue;
+    if (stored.some((b) => clockTimesEqual(b.time, end.time))) continue;
 
     out.push({
       id: `computed:end:${xParsed.channel}:${xParsed.date}:${runLetter}`,
-      time,
+      time: end.time,
       note: `Trial ${runLetter} end`,
+      plotIso: end.plotIso,
     });
   }
 
@@ -110,4 +140,19 @@ export function plotBookmarksForSeries(series: {
 
 export function isComputedBookmarkId(id: string): boolean {
   return id.startsWith("computed:");
+}
+
+/** Resolve bookmark onto plot x-axis (calendar ISO or aligned minutes). */
+export function bookmarkPlotX(
+  bookmark: TrialBookmark,
+  firstSampleIso: string | undefined,
+  mode: "calendar" | "aligned",
+  sessionStart: string | null,
+): string | number | null {
+  const absoluteIso =
+    bookmark.plotIso ?? sessionStartIso(firstSampleIso, bookmark.time);
+  if (!absoluteIso) return null;
+  if (mode === "calendar") return absoluteIso;
+  if (!sessionStart) return null;
+  return (Date.parse(absoluteIso) - Date.parse(sessionStart)) / 60000;
 }

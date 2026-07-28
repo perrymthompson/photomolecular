@@ -45,7 +45,7 @@ import type {
 } from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
-import { plotBookmarksForSeries } from "@/lib/x-run-dynamic-bookmarks";
+import { bookmarkPlotX, plotBookmarksForSeries } from "@/lib/x-run-dynamic-bookmarks";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { uniqueDateLabels } from "@/lib/trial-sort";
@@ -164,13 +164,11 @@ function nearbyBookmarkForSample(
   return { time: best.bm.time, note: best.bm.note };
 }
 
-function metricValueAtBookmark(
+function metricValueAtInstant(
   points: TrialSeries["points"],
-  bookmarkTime: string,
+  targetIso: string,
   metric: MetricKey,
 ): number | null {
-  const targetIso = sessionStartIso(points[0]?.time, bookmarkTime);
-  if (!targetIso) return null;
   const targetMs = Date.parse(targetIso);
   if (!Number.isFinite(targetMs)) return null;
 
@@ -184,6 +182,17 @@ function metricValueAtBookmark(
     }
   }
   return best ? metricValue(best, metric) : null;
+}
+
+function metricValueAtBookmark(
+  points: TrialSeries["points"],
+  bookmark: TrialBookmark,
+  metric: MetricKey,
+): number | null {
+  const targetIso =
+    bookmark.plotIso ?? sessionStartIso(points[0]?.time, bookmark.time);
+  if (!targetIso) return null;
+  return metricValueAtInstant(points, targetIso, metric);
 }
 
 /** Format a Date as HH:MM:SS in UTC (matches CSV / bookmark clock). */
@@ -591,9 +600,14 @@ export function SensorPlot({
       const by: number[] = [];
       const texts: string[] = [];
       for (const b of bookmarks) {
-        const x = bookmarkX(s.points[0]?.time, b.time, mode, startIso);
+        const x = bookmarkPlotX(
+          b,
+          s.points[0]?.time,
+          mode,
+          startIso,
+        );
         if (x === null) continue;
-        const y = metricValueAtBookmark(s.points, b.time, metrics[0]);
+        const y = metricValueAtBookmark(s.points, b, metrics[0]);
         if (y === null) continue;
         bx.push(x);
         by.push(y);

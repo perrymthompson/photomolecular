@@ -11,6 +11,11 @@ export type TrialBookmark = {
   time: string;
   /** Free-text note shown on hover over the plot marker. */
   note: string;
+  /**
+   * Optional absolute UTC instant for plotting (e.g. dynamic ends after midnight).
+   * Not persisted to the database.
+   */
+  plotIso?: string;
 };
 
 export type TrialMeta = {
