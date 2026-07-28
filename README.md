@@ -89,7 +89,8 @@ docs/                     ← setup + daily workflow
 |---------|-------------|
 | `npm run dev` | Local development server |
 | `npm run build` | Production build |
-| `npm run sync` | Sync `data/csv/` → Supabase (or refresh local metadata) |
+| `npm run sync` | Register new CSVs in `data/csv/` |
+| `npm run sync:refresh` | Re-upload changed CSVs (keeps notes/bookmarks) |
 | `npm run lint` | ESLint |
 
 ## Deploy to Vercel

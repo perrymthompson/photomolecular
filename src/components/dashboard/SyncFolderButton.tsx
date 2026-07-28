@@ -12,19 +12,28 @@ export function SyncFolderButton({ onSynced }: Props) {
   const [message, setMessage] = useState<string | null>(null);
   const [ok, setOk] = useState(false);
 
-  const run = async () => {
+  const run = async (refresh: boolean) => {
     setBusy(true);
     setMessage(null);
     try {
-      const res = await fetch("/api/csv/sync", { method: "POST" });
+      const res = await fetch("/api/csv/sync", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ refresh }),
+      });
       const body = (await res.json()) as SyncResult & { error?: string };
       if (!res.ok) throw new Error(body.error ?? "Sync failed");
-      setOk(body.uploaded.length > 0 || body.scanned > 0);
-      setMessage(
-        body.uploaded.length
-          ? `${body.message}\nNew: ${body.uploaded.join(", ")}`
-          : body.message,
+      setOk(
+        body.uploaded.length > 0 ||
+          body.refreshed.length > 0 ||
+          body.scanned > 0,
       );
+      const lines = [body.message];
+      if (body.uploaded.length) lines.push(`New: ${body.uploaded.join(", ")}`);
+      if (body.refreshed.length) {
+        lines.push(`Refreshed: ${body.refreshed.join(", ")}`);
+      }
+      setMessage(lines.join("\n"));
       onSynced();
     } catch (e) {
       setOk(false);
@@ -40,20 +49,33 @@ export function SyncFolderButton({ onSynced }: Props) {
         <div>
           <h2 className="text-sm font-medium text-white">Sync folder CSVs</h2>
           <p className="mt-1 text-xs text-[#8a8a8d]">
-            Same as <code className="text-[#b5b5b8]">npm run sync</code>: scan{" "}
-            <code className="text-[#b5b5b8]">data/csv/</code> and register any
-            new files. On Vercel this only sees CSVs committed in the repo —
-            use upload above for brand-new files on the live site.
+            Scan <code className="text-[#b5b5b8]">data/csv/</code>.{" "}
+            <strong className="font-normal text-[#b5b5b8]">Run sync</strong>{" "}
+            registers new files.{" "}
+            <strong className="font-normal text-[#b5b5b8]">Refresh data</strong>{" "}
+            re-uploads changed CSVs and keeps notes / bookmarks / session
+            starts.
           </p>
         </div>
-        <button
-          type="button"
-          disabled={busy}
-          onClick={() => void run()}
-          className="shrink-0 rounded bg-[#4C8FD1] px-4 py-2 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50"
-        >
-          {busy ? "Syncing…" : "Run sync"}
-        </button>
+        <div className="flex shrink-0 flex-wrap gap-2">
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void run(false)}
+            className="rounded bg-[#4C8FD1] px-4 py-2 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50"
+          >
+            {busy ? "Working…" : "Run sync"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void run(true)}
+            title="Overwrite Supabase CSV data for files already registered (metadata preserved)"
+            className="rounded border border-[#4C8FD1] px-4 py-2 text-sm font-medium text-[#4C8FD1] hover:bg-[#4C8FD1]/10 disabled:opacity-50"
+          >
+            {busy ? "Working…" : "Refresh data"}
+          </button>
+        </div>
       </div>
       {message ? (
         <p

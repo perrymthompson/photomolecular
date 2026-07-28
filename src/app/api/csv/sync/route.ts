@@ -4,9 +4,16 @@ import { runCsvSync } from "@/lib/sync-csv";
 export const runtime = "nodejs";
 
 /** Same as `npm run sync`: register new CSVs from data/csv/. */
-export async function POST() {
+export async function POST(req: Request) {
   try {
-    const result = await runCsvSync();
+    let refresh = false;
+    try {
+      const body = (await req.json()) as { refresh?: boolean };
+      refresh = Boolean(body.refresh);
+    } catch {
+      // empty body is fine
+    }
+    const result = await runCsvSync({ refresh });
     return NextResponse.json(result);
   } catch (e) {
     return NextResponse.json(

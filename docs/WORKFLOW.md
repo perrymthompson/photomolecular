@@ -7,7 +7,8 @@
    (`ch{N}_{MMDDYYYY}{optional run letter}_…`).
 3. Save into `data/csv/`.
 4. Sync:
-   - **With Supabase:** `npm run sync`
+   - **New files:** `npm run sync`
+   - **Changed CSV, same filename:** `npm run sync:refresh` (keeps notes / bookmarks / session starts)
    - **Git-only:** `git add data/csv && git commit && git push`
 5. Open the site → **Dashboard**.
 6. For each trial, enter:

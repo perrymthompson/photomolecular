@@ -3,7 +3,8 @@
  * Sync local data/csv/*.csv → Supabase Storage + trials table.
  *
  * Usage:
- *   npm run sync
+ *   npm run sync              register new CSVs only
+ *   npm run sync:refresh      re-upload changed CSVs (keeps notes/bookmarks)
  *
  * Requires .env.local:
  *   NEXT_PUBLIC_SUPABASE_URL=
@@ -27,6 +28,7 @@ loadEnv({ path: path.join(root, ".env") });
 const CSV_DIR = path.join(root, "data", "csv");
 const META_PATH = path.join(root, "data", "metadata.json");
 const BUCKET = "chamber-csvs";
+const refresh = process.argv.includes("--refresh");
 
 function labelFromFilename(filename) {
   const m = filename.match(/^([^_]+)/);
@@ -46,6 +48,16 @@ function extractDateLabel(filename) {
     timeZone: "UTC",
   });
   return run ? `${label} (Run ${run.toUpperCase()})` : label;
+}
+
+function contentHash(buf) {
+  return createHash("sha1").update(buf).digest("hex").slice(0, 10);
+}
+
+function storagePathForUpload(filename, buf) {
+  const hash = contentHash(buf);
+  const safeFile = filename.replace(/[^\w.\-]+/g, "_");
+  return `${hash}_${safeFile}`;
 }
 
 async function ensureMeta() {
@@ -86,6 +98,11 @@ async function syncLocalOnly() {
   );
   await fs.writeFile(META_PATH, JSON.stringify(meta, null, 2));
   console.log(`Local inventory: ${meta.trials.length} trial(s) in data/metadata.json`);
+  if (refresh) {
+    console.log(
+      "Refresh: local mode reads data/csv/ directly — files are already live after overwrite.",
+    );
+  }
 }
 
 async function syncSupabase() {
@@ -104,23 +121,58 @@ async function syncSupabase() {
     f.toLowerCase().endsWith(".csv"),
   );
 
-  const { data: existing, error } = await sb.from("trials").select("*");
+  const { data: existing, error } = await sb
+    .from("trials")
+    .select("filename, storage_path");
   if (error) throw error;
   const byFilename = new Map((existing ?? []).map((r) => [r.filename, r]));
 
+  const uploaded = [];
+  const refreshed = [];
+  const skipped = [];
+
   for (const file of files) {
     const buf = await fs.readFile(path.join(CSV_DIR, file));
-    const hash = createHash("sha1").update(buf).digest("hex").slice(0, 10);
-    // Supabase Storage object keys reject some characters (e.g. `?`) because
-    // they end up in URL paths. Keep trials.filename untouched, but sanitize
-    // the *storage key* portion.
-    const safeFile = file.replace(/[^\w.\-]+/g, "_");
-    const storagePath = `${hash}_${safeFile}`;
+    const row = byFilename.get(file);
 
-    if (byFilename.has(file)) {
-      console.log(`skip (already registered): ${file}`);
+    if (row) {
+      if (!refresh) {
+        console.log(`skip (already registered): ${file}`);
+        skipped.push(file);
+        continue;
+      }
+      const newPath = storagePathForUpload(file, buf);
+      if (newPath === row.storage_path) {
+        console.log(`skip (unchanged): ${file}`);
+        skipped.push(file);
+        continue;
+      }
+      const { error: upErr } = await sb.storage
+        .from(BUCKET)
+        .upload(newPath, buf, {
+          contentType: "text/csv",
+          upsert: true,
+        });
+      if (upErr) throw upErr;
+
+      if (newPath !== row.storage_path) {
+        const { error: metaErr } = await sb
+          .from("trials")
+          .update({
+            storage_path: newPath,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("filename", file);
+        if (metaErr) throw metaErr;
+        await sb.storage.from(BUCKET).remove([row.storage_path]);
+      }
+
+      console.log(`refreshed: ${file} → ${newPath}`);
+      refreshed.push(file);
       continue;
     }
+
+    const storagePath = storagePathForUpload(file, buf);
 
     const { error: upErr } = await sb.storage
       .from(BUCKET)
@@ -128,7 +180,7 @@ async function syncSupabase() {
     if (upErr && !/already exists/i.test(upErr.message)) throw upErr;
 
     const now = new Date().toISOString();
-    const row = {
+    const insertRow = {
       id: randomUUID(),
       label: labelFromFilename(file),
       filename: file,
@@ -140,12 +192,15 @@ async function syncSupabase() {
       uploaded_at: now,
       updated_at: now,
     };
-    const { error: insErr } = await sb.from("trials").insert(row);
+    const { error: insErr } = await sb.from("trials").insert(insertRow);
     if (insErr) throw insErr;
     console.log(`uploaded: ${file} → ${storagePath}`);
+    uploaded.push(file);
   }
 
-  console.log(`Done. Synced ${files.length} local CSV(s).`);
+  console.log(
+    `Done. scanned=${files.length} new=${uploaded.length} refreshed=${refreshed.length} skipped=${skipped.length}`,
+  );
 }
 
 syncSupabase().catch((e) => {

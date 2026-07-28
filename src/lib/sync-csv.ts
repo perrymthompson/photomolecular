@@ -4,6 +4,9 @@
  * Scans data/csv/*.csv and registers any file not already in the trials table
  * (uploads to Supabase Storage when configured; otherwise refreshes local metadata).
  *
+ * With `refresh: true`, re-uploads local CSV bytes onto existing storage paths
+ * (keeps notes, bookmarks, session starts on the trial row).
+ *
  * On Vercel this only sees CSVs that were committed into the repo under data/csv/.
  * Brand-new files on the live site should use Dashboard upload instead.
  */
@@ -21,10 +24,26 @@ const IS_VERCEL = Boolean(process.env.VERCEL);
 export type SyncResult = {
   scanned: number;
   uploaded: string[];
+  refreshed: string[];
   skipped: string[];
   mode: "supabase" | "local";
   message: string;
 };
+
+export type SyncOptions = {
+  /** Re-upload changed CSVs for trials already registered (preserves metadata). */
+  refresh?: boolean;
+};
+
+function contentHash(buf: Buffer): string {
+  return createHash("sha1").update(buf).digest("hex").slice(0, 10);
+}
+
+function storagePathForUpload(filename: string, buf: Buffer): string {
+  const hash = contentHash(buf);
+  const safeFile = filename.replace(/[^\w.\-]+/g, "_");
+  return `${hash}_${safeFile}`;
+}
 
 async function listLocalCsvFiles(): Promise<string[]> {
   try {
@@ -41,6 +60,7 @@ async function syncLocal(): Promise<SyncResult> {
     return {
       scanned: 0,
       uploaded: [],
+      refreshed: [],
       skipped: [],
       mode: "local",
       message:
@@ -93,36 +113,81 @@ async function syncLocal(): Promise<SyncResult> {
   return {
     scanned: files.length,
     uploaded,
+    refreshed: [],
     skipped,
     mode: "local",
     message:
       uploaded.length > 0
         ? `Registered ${uploaded.length} new local CSV(s).`
-        : `No new files. Scanned ${files.length} CSV(s) in data/csv/.`,
+        : `No new files. Scanned ${files.length} CSV(s) in data/csv/. Local mode reads CSVs from disk directly — overwrite files there to refresh plots.`,
   };
 }
 
-async function syncSupabase(): Promise<SyncResult> {
+type TrialRow = {
+  filename: string;
+  storage_path: string;
+};
+
+async function syncSupabase(options: SyncOptions): Promise<SyncResult> {
   const sb = getSupabaseAdmin();
   if (!sb) return syncLocal();
 
+  const refresh = options.refresh ?? false;
   const files = await listLocalCsvFiles();
-  const { data: existing, error } = await sb.from("trials").select("filename");
+  const { data: existing, error } = await sb
+    .from("trials")
+    .select("filename, storage_path");
   if (error) throw new Error(error.message);
 
-  const byFilename = new Set((existing ?? []).map((r) => r.filename as string));
+  const byFilename = new Map(
+    (existing ?? []).map((r) => [
+      (r as TrialRow).filename,
+      r as TrialRow,
+    ]),
+  );
   const uploaded: string[] = [];
+  const refreshed: string[] = [];
   const skipped: string[] = [];
 
   for (const file of files) {
-    if (byFilename.has(file)) {
-      skipped.push(file);
+    const buf = await fs.readFile(path.join(CSV_DIR, file));
+    const row = byFilename.get(file);
+
+    if (row) {
+      if (!refresh) {
+        skipped.push(file);
+        continue;
+      }
+      const newPath = storagePathForUpload(file, buf);
+      if (newPath === row.storage_path) {
+        skipped.push(file);
+        continue;
+      }
+      const { error: upErr } = await sb.storage
+        .from(BUCKET)
+        .upload(newPath, buf, {
+          contentType: "text/csv",
+          upsert: true,
+        });
+      if (upErr) throw new Error(`${file}: ${upErr.message}`);
+
+      if (newPath !== row.storage_path) {
+        const { error: metaErr } = await sb
+          .from("trials")
+          .update({
+            storage_path: newPath,
+            updated_at: new Date().toISOString(),
+          })
+          .eq("filename", file);
+        if (metaErr) throw new Error(`${file}: ${metaErr.message}`);
+        await sb.storage.from(BUCKET).remove([row.storage_path]);
+      }
+
+      refreshed.push(file);
       continue;
     }
 
-    const buf = await fs.readFile(path.join(CSV_DIR, file));
-    const hash = createHash("sha1").update(buf).digest("hex").slice(0, 10);
-    const storagePath = `${hash}_${file}`;
+    const storagePath = storagePathForUpload(file, buf);
 
     const { error: upErr } = await sb.storage
       .from(BUCKET)
@@ -148,22 +213,34 @@ async function syncSupabase(): Promise<SyncResult> {
     uploaded.push(file);
   }
 
+  const parts: string[] = [];
+  if (uploaded.length) parts.push(`${uploaded.length} new`);
+  if (refreshed.length) parts.push(`${refreshed.length} refreshed`);
+  if (skipped.length && !uploaded.length && !refreshed.length) {
+    parts.push(
+      refresh
+        ? `${skipped.length} unchanged`
+        : `${skipped.length} already registered`,
+    );
+  }
+
   return {
     scanned: files.length,
     uploaded,
+    refreshed,
     skipped,
     mode: "supabase",
     message:
-      uploaded.length > 0
-        ? `Synced ${uploaded.length} new CSV(s) from data/csv/ to Supabase.`
-        : files.length === 0
-          ? "No CSV files found in data/csv/. Drop files there (or upload via Dashboard)."
-          : `No new files. ${skipped.length} CSV(s) already registered.`,
+      files.length === 0
+        ? "No CSV files found in data/csv/. Drop files there (or upload via Dashboard)."
+        : parts.length
+          ? `Sync complete: ${parts.join(", ")}.`
+          : "Nothing to sync.",
   };
 }
 
 /** Run inventory sync (local folder → Supabase or local metadata). */
-export async function runCsvSync(): Promise<SyncResult> {
-  if (isSupabaseConfigured()) return syncSupabase();
+export async function runCsvSync(options: SyncOptions = {}): Promise<SyncResult> {
+  if (isSupabaseConfigured()) return syncSupabase(options);
   return syncLocal();
 }

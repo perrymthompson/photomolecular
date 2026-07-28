@@ -45,7 +45,11 @@ import type {
 } from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
-import { bookmarkPlotX, plotBookmarksForSeries } from "@/lib/x-run-dynamic-bookmarks";
+import {
+  bookmarkPlotX,
+  isComputedEndBookmark,
+  plotBookmarksForSeries,
+} from "@/lib/x-run-dynamic-bookmarks";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { uniqueDateLabels } from "@/lib/trial-sort";
@@ -85,6 +89,8 @@ type CurveMeta = {
 };
 
 const BOOKMARK_SIZE = 13;
+const END_LINE_COLOR = "#8a8a8d";
+const END_LINE_HOVER_STEPS = 28;
 
 /** Stable fingerprint of sensor points (ignores bookmark/notes edits). */
 function pointsFingerprint(series: TrialSeries[]): string {
@@ -599,14 +605,69 @@ export function SensorPlot({
       const bx: (string | number)[] = [];
       const by: number[] = [];
       const texts: string[] = [];
+
       for (const b of bookmarks) {
-        const x = bookmarkPlotX(
-          b,
-          s.points[0]?.time,
-          mode,
-          startIso,
-        );
+        const x = bookmarkPlotX(b, s.points[0]?.time, mode, startIso);
         if (x === null) continue;
+
+        if (isComputedEndBookmark(b)) {
+          const vals = s.points.map((p) => metricValue(p, metrics[0]));
+          if (!vals.length) continue;
+          let yLo = vals[0];
+          let yHi = vals[0];
+          for (const v of vals) {
+            if (v < yLo) yLo = v;
+            if (v > yHi) yHi = v;
+          }
+          const pad = (yHi - yLo) * 0.08 || Math.abs(yHi) * 0.08 || 0.5;
+          yLo -= pad;
+          yHi += pad;
+
+          const hoverText = `${b.note}<br>${b.time}`;
+          const hx: (string | number)[] = [];
+          const hy: number[] = [];
+          const ht: string[] = [];
+          for (let i = 0; i < END_LINE_HOVER_STEPS; i++) {
+            const t = i / (END_LINE_HOVER_STEPS - 1);
+            hx.push(x);
+            hy.push(yLo + t * (yHi - yLo));
+            ht.push(hoverText);
+          }
+
+          traces.push({
+            type: "scatter",
+            mode: "lines",
+            name: `${name} ${b.note}`,
+            legendgroup: s.meta.id,
+            showlegend: false,
+            x: hx,
+            y: hy,
+            yaxis: "y",
+            line: { color: END_LINE_COLOR, width: 1.5, dash: "dot" },
+            hovertemplate: "%{text}<extra></extra>",
+            text: ht,
+          });
+          meta.push({
+            trialId: s.meta.id,
+            kind: "bookmark",
+            color: END_LINE_COLOR,
+            metric: metrics[0],
+          });
+
+          shapes.push({
+            type: "line",
+            xref: "x",
+            yref: "paper",
+            x0: x,
+            x1: x,
+            y0: 0,
+            y1: 1,
+            line: { color: END_LINE_COLOR, width: 1, dash: "dot" },
+            opacity: 0.7,
+          });
+          continue;
+        }
+
         const y = metricValueAtBookmark(s.points, b, metrics[0]);
         if (y === null) continue;
         bx.push(x);
