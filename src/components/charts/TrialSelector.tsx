@@ -38,8 +38,8 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
   }
 
   return (
-    <div className="space-y-3">
-      <div className="flex flex-wrap gap-2">
+    <div className="flex min-h-0 flex-1 flex-col gap-3">
+      <div className="flex shrink-0 flex-wrap gap-2">
         <button
           type="button"
           className="rounded border border-[#3a3b3f] px-2 py-1 text-xs text-[#e8e8e8] hover:bg-[#2a2b2e]"
@@ -56,7 +56,7 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
         </button>
       </div>
 
-      <div className="max-h-[min(52vh,420px)] space-y-3 overflow-y-auto pr-1">
+      <div className="scrollbar-themed min-h-0 flex-1 space-y-3 overflow-y-auto pr-1">
         {visibleGroups.map(({ day, runs }) => (
           <div key={day}>
             <h3 className="mb-1.5 text-xs font-semibold uppercase tracking-wide text-[#8a8a8d]">
@@ -87,6 +87,11 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
                               <span className="block truncate text-[10px] text-[#8a8a8d]">
                                 {t.filename}
                               </span>
+                              {t.plotLabel?.trim() ? (
+                                <span className="block truncate text-[10px] text-[#b5b5b8]">
+                                  {t.plotLabel.trim()}
+                                </span>
+                              ) : null}
                             </span>
                           </label>
                         </li>
@@ -103,7 +108,7 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
       {hiddenCount > 0 ? (
         <button
           type="button"
-          className="w-full rounded border border-[#3a3b3f] px-2 py-1.5 text-xs text-[#b5b5b8] hover:bg-[#2a2b2e] hover:text-white"
+          className="w-full shrink-0 rounded border border-[#3a3b3f] px-2 py-1.5 text-xs text-[#b5b5b8] hover:bg-[#2a2b2e] hover:text-white"
           onClick={() => setExpandedDays((n) => n + 3)}
         >
           Load more days ({hiddenCount} older)

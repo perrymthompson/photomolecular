@@ -118,8 +118,8 @@ function bookmarksFingerprint(series: TrialSeries[]): string {
     .join("|");
 }
 
-function notesFingerprint(series: TrialSeries[]): string {
-  return series.map((s) => `${s.meta.id}:${s.meta.notes ?? ""}`).join("|");
+function plotLabelFingerprint(series: TrialSeries[]): string {
+  return series.map((s) => `${s.meta.id}:${s.meta.plotLabel ?? ""}`).join("|");
 }
 
 /** Pick the numeric y-value for a metric from one sample point. */
@@ -160,6 +160,7 @@ function buildRawTraceSeries(
   startIso: string | null,
   color: string,
   label: string,
+  plotLabel: string,
   bookmarks: TrialBookmark[],
   breakOnGaps: boolean,
 ): {
@@ -206,6 +207,7 @@ function buildRawTraceSeries(
       text.push(
         [
           `<span style="color:${color}">●</span> ${label}`,
+          ...(plotLabel.trim() ? [plotLabel.trim()] : []),
           `${METRIC_SHORT[metric].short} ${yValue.toFixed(3)} ${METRIC_SHORT[metric].unit}`,
           ...(nearby ? [`${nearby.time} - ${nearby.note}`] : []),
         ].join("<br>"),
@@ -463,7 +465,7 @@ export function SensorPlot({
 
   const pointsKey = useMemo(() => pointsFingerprint(series), [series]);
   const bookmarksKey = useMemo(() => bookmarksFingerprint(series), [series]);
-  const notesKey = useMemo(() => notesFingerprint(series), [series]);
+  const plotLabelsKey = useMemo(() => plotLabelFingerprint(series), [series]);
 
   useEffect(() => {
     let cancelled = false;
@@ -551,7 +553,8 @@ export function SensorPlot({
           mode,
           startIso,
           color,
-          s.meta.label,
+          name,
+          s.meta.plotLabel ?? "",
           s.meta.bookmarks ?? [],
           fullResolution,
         );
@@ -832,10 +835,6 @@ export function SensorPlot({
 
   const layout = useMemo(() => {
     const current = seriesRef.current;
-    const notes = current
-      .filter((s) => s.meta.notes?.trim())
-      .map((s) => `${legendName(s)}: ${s.meta.notes.trim()}`)
-      .join("   |   ");
 
     const dateLabels = uniqueDateLabels(current.map((s) => s.meta));
     const datePart =
@@ -859,20 +858,7 @@ export function SensorPlot({
         x: 0.01,
         xanchor: "left",
       },
-      annotations: notes
-        ? [
-            {
-              text: notes,
-              xref: "paper",
-              yref: "paper",
-              x: 0,
-              y: 1.06,
-              showarrow: false,
-              font: { color: DARK_THEME.subtext, size: 11 },
-              xanchor: "left",
-            },
-          ]
-        : [],
+      annotations: [],
       paper_bgcolor: DARK_THEME.bg,
       plot_bgcolor: DARK_THEME.bg,
       font: { color: DARK_THEME.text },
@@ -882,7 +868,7 @@ export function SensorPlot({
         bgcolor: DARK_THEME.bg,
         font: { color: DARK_THEME.text },
       },
-      margin: { t: notes ? 72 : 56, r: 24, b: 56, l: 72 },
+      margin: { t: 56, r: 24, b: 56, l: 72 },
       hovermode: "x unified",
       hoverdistance: 20,
       uirevision: "sensor-plot",
@@ -912,7 +898,20 @@ export function SensorPlot({
     };
     return layoutObj;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, bookmarkLayer, mode, metrics, height, notesKey, pointsKey]);
+  }, [base, bookmarkLayer, mode, metrics, height, plotLabelsKey, pointsKey]);
+
+  const plotLabelRows = useMemo(
+    () =>
+      series
+        .map((s) => ({
+          id: s.meta.id,
+          name: legendName(s),
+          plotLabel: s.meta.plotLabel?.trim() ?? "",
+          color: colors[s.meta.id] ?? "#888",
+        }))
+        .filter((row) => row.plotLabel.length > 0),
+    [series, colors],
+  );
 
   const data = useMemo(
     () => [...base.traces, ...bookmarkLayer.traces],
@@ -996,6 +995,30 @@ export function SensorPlot({
         }}
         onClick={handleClick}
       />
+      {plotLabelRows.length > 0 ? (
+        <div className="border-t border-[#3a3b3f] px-4 py-2">
+          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#8a8a8d]">
+            Labels
+          </p>
+          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
+            {plotLabelRows.map((row) => (
+              <div
+                key={row.id}
+                className="flex min-w-0 max-w-full items-baseline gap-2 text-xs"
+              >
+                <span
+                  className="inline-block h-2 w-2 shrink-0 rounded-full"
+                  style={{ backgroundColor: row.color }}
+                />
+                <span className="truncate text-[#b5b5b8]">{row.name}</span>
+                <span className="truncate font-medium text-[#e8e8e8]">
+                  {row.plotLabel}
+                </span>
+              </div>
+            ))}
+          </div>
+        </div>
+      ) : null}
     </div>
   );
 }

@@ -12,17 +12,20 @@ export async function PATCH(req: Request, ctx: Ctx) {
       notes?: string;
       sessionStartTime?: string | null;
       label?: string;
+      plotLabel?: string;
       bookmarks?: { id?: string; time: string; note: string }[];
     };
     const patch: {
       notes?: string;
       sessionStartTime?: string | null;
       label?: string;
+      plotLabel?: string;
       bookmarks?: { id: string; time: string; note: string }[];
     } = {
       notes: body.notes,
       sessionStartTime: body.sessionStartTime,
       label: body.label,
+      plotLabel: body.plotLabel,
     };
     if (body.bookmarks !== undefined) {
       patch.bookmarks = body.bookmarks.map((b) => ({

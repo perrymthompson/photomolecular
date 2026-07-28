@@ -20,10 +20,15 @@ export type TrialBookmark = {
 
 export type TrialMeta = {
   id: string;
-  /** Display label, usually filename prefix before first underscore (e.g. "ch1"). */
+  /** Channel prefix from filename (e.g. "ch1", "amb"). */
   label: string;
   filename: string;
-  /** Free-text notes shown in plot subtitles (editable in dashboard). */
+  /**
+   * User-defined condition label for plots (e.g. "Dark", "Light, 45°").
+   * Shown under the plot legend and in hover tooltips.
+   */
+  plotLabel: string;
+  /** Free-text notes (editable on Dashboard and Plot page). */
   notes: string;
   /**
    * Session / exposure start as HH:MM:SS (24h) on the trial's data date.

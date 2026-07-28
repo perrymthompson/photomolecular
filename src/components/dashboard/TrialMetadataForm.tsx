@@ -12,10 +12,10 @@ type Props = {
 
 export function TrialMetadataForm({ trial, onSaved, onDeleted }: Props) {
   const [notes, setNotes] = useState(trial.notes);
+  const [plotLabel, setPlotLabel] = useState(trial.plotLabel ?? "");
   const [sessionStartTime, setSessionStartTime] = useState(
     trial.sessionStartTime ?? "",
   );
-  const [label, setLabel] = useState(trial.label);
   const [status, setStatus] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
 
@@ -28,8 +28,8 @@ export function TrialMetadataForm({ trial, onSaved, onDeleted }: Props) {
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           notes,
+          plotLabel: plotLabel.trim(),
           sessionStartTime: sessionStartTime.trim() || null,
-          label: label.trim() || trial.label,
         }),
       });
       if (!res.ok) throw new Error(await res.text());
@@ -76,14 +76,23 @@ export function TrialMetadataForm({ trial, onSaved, onDeleted }: Props) {
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
         <label className="block text-xs text-[#b5b5b8]">
-          Label
+          Channel
           <input
-            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#e8e8e8]"
-            value={label}
-            onChange={(e) => setLabel(e.target.value)}
+            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#8a8a8d]"
+            value={trial.label}
+            readOnly
           />
         </label>
         <label className="block text-xs text-[#b5b5b8] sm:col-span-2">
+          Plot label
+          <input
+            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#e8e8e8]"
+            placeholder='e.g. "Dark" or "Light, 45°"'
+            value={plotLabel}
+            onChange={(e) => setPlotLabel(e.target.value)}
+          />
+        </label>
+        <label className="block text-xs text-[#b5b5b8] sm:col-span-3">
           Session start (HH:MM:SS, 24h)
           <input
             className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#e8e8e8]"
@@ -93,9 +102,10 @@ export function TrialMetadataForm({ trial, onSaved, onDeleted }: Props) {
           />
         </label>
         <label className="block text-xs text-[#b5b5b8] sm:col-span-3">
-          Notes (e.g. &quot;ch2: Dark&quot;)
-          <input
-            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#e8e8e8]"
+          Notes
+          <textarea
+            rows={4}
+            className="scrollbar-themed mt-1 w-full resize-y rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#e8e8e8]"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />

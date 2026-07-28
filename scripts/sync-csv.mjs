@@ -184,6 +184,7 @@ async function syncSupabase() {
       id: randomUUID(),
       label: labelFromFilename(file),
       filename: file,
+      plot_label: "",
       notes: "",
       session_start_time: null,
       date_label: extractDateLabel(file),

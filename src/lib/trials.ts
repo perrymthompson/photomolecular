@@ -104,6 +104,7 @@ function rowToMeta(row: Record<string, unknown>): TrialMeta {
     id: row.id as string,
     label: row.label as string,
     filename: row.filename as string,
+    plotLabel: (row.plot_label as string | undefined) ?? "",
     notes: (row.notes as string) ?? "",
     sessionStartTime: (row.session_start_time as string) ?? null,
     dateLabel: (row.date_label as string) ?? null,
@@ -120,6 +121,7 @@ function newMeta(filename: string, storagePath: string): TrialMeta {
     id: crypto.randomUUID(),
     label: labelFromFilename(filename),
     filename,
+    plotLabel: "",
     notes: "",
     sessionStartTime: null,
     dateLabel: extractDateLabel(filename),
@@ -164,6 +166,7 @@ export async function syncLocalInventory(): Promise<TrialMeta[]> {
   if (changed && canWriteLocalData()) await writeLocalMeta(meta);
   return meta.trials.map((t) => ({
     ...t,
+    plotLabel: t.plotLabel ?? "",
     bookmarks: normalizeBookmarks(t.bookmarks),
   }));
 }
@@ -215,6 +218,7 @@ async function getTrialById(id: string): Promise<TrialMeta | null> {
   if (!trial) return null;
   return {
     ...trial,
+    plotLabel: trial.plotLabel ?? "",
     bookmarks: normalizeBookmarks(trial.bookmarks),
   };
 }
@@ -222,7 +226,7 @@ async function getTrialById(id: string): Promise<TrialMeta | null> {
 async function writeTrialUpdate(
   id: string,
   patch: Partial<
-    Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "bookmarks">
+    Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "plotLabel" | "bookmarks">
   >,
 ): Promise<TrialMeta | null> {
   if (shouldUseSupabase()) {
@@ -236,6 +240,7 @@ async function writeTrialUpdate(
       payload.session_start_time = patch.sessionStartTime;
     }
     if (patch.label !== undefined) payload.label = patch.label;
+    if (patch.plotLabel !== undefined) payload.plot_label = patch.plotLabel;
     if (patch.bookmarks !== undefined) {
       payload.bookmarks = normalizeBookmarks(patch.bookmarks);
     }
@@ -273,7 +278,7 @@ async function writeTrialUpdate(
 async function mirrorBookmarksOntoXRun(
   source: TrialMeta,
   patch: Partial<
-    Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "bookmarks">
+    Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "plotLabel" | "bookmarks">
   >,
 ): Promise<void> {
   const additions = collectMirroredBookmarks(
@@ -295,7 +300,7 @@ async function mirrorBookmarksOntoXRun(
 export async function updateTrial(
   id: string,
   patch: Partial<
-    Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "bookmarks">
+    Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "plotLabel" | "bookmarks">
   >,
 ): Promise<TrialMeta | null> {
   const existing = await getTrialById(id);
@@ -444,6 +449,7 @@ export async function saveUploadedCsv(
         id: trial.id,
         label: trial.label,
         filename: trial.filename,
+        plot_label: trial.plotLabel,
         notes: trial.notes,
         session_start_time: trial.sessionStartTime,
         date_label: trial.dateLabel,

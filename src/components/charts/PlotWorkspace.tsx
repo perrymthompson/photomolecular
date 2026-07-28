@@ -13,6 +13,7 @@ import {
   PlotBookmarkAdd,
   type BookmarkPrefill,
 } from "@/components/charts/PlotBookmarkAdd";
+import { PlotTrialNotes } from "@/components/charts/PlotTrialNotes";
 import { TrialSelector } from "@/components/charts/TrialSelector";
 import { selectionSpansMultipleRuns, sortTrials } from "@/lib/trial-sort";
 import type { MetricKey, PlotMode, TrialMeta, TrialSeries } from "@/types/trial";
@@ -280,12 +281,23 @@ export function PlotWorkspace() {
     bumpPlot();
   };
 
+  const handleTrialUpdated = useCallback((updated: TrialMeta) => {
+    startTransition(() => {
+      setTrials((prev) =>
+        sortTrials(prev.map((t) => (t.id === updated.id ? updated : t))),
+      );
+      setSeries((prev) =>
+        prev.map((s) => (s.meta.id === updated.id ? { ...s, meta: updated } : s)),
+      );
+    });
+  }, []);
+
   const plotHeight = mode === "aligned" || view !== "combined" ? 480 : 720;
 
   return (
-    <div className="mx-auto grid max-w-7xl gap-6 px-4 py-6 lg:grid-cols-[260px_1fr]">
-      <aside className="space-y-3 rounded-lg border border-[#3a3b3f] bg-[#16171a] p-3">
-        <h2 className="text-sm font-semibold text-white">Trials</h2>
+    <div className="mx-auto grid max-w-7xl items-stretch gap-6 px-4 py-6 lg:grid-cols-[260px_1fr]">
+      <aside className="flex min-h-0 flex-col self-stretch rounded-lg border border-[#3a3b3f] bg-[#16171a] p-3">
+        <h2 className="mb-3 shrink-0 text-sm font-semibold text-white">Trials</h2>
         <TrialSelector
           trials={trials}
           selectedIds={selectedIds}
@@ -428,24 +440,14 @@ export function PlotWorkspace() {
         </div>
 
         {visibleSeries.length > 0 ? (
-          <PlotBookmarkAdd
-            series={visibleSeries}
-            prefill={bookmarkPrefill}
-            onSaved={(updated) => {
-              startTransition(() => {
-                setTrials((prev) =>
-                  sortTrials(
-                    prev.map((t) => (t.id === updated.id ? updated : t)),
-                  ),
-                );
-                setSeries((prev) =>
-                  prev.map((s) =>
-                    s.meta.id === updated.id ? { ...s, meta: updated } : s,
-                  ),
-                );
-              });
-            }}
-          />
+          <>
+            <PlotBookmarkAdd
+              series={visibleSeries}
+              prefill={bookmarkPrefill}
+              onSaved={handleTrialUpdated}
+            />
+            <PlotTrialNotes series={visibleSeries} onSaved={handleTrialUpdated} />
+          </>
         ) : null}
       </section>
     </div>
