@@ -163,6 +163,28 @@ function nearbyBookmarkForSample(
   return { time: best.bm.time, note: best.bm.note };
 }
 
+function metricValueAtBookmark(
+  points: TrialSeries["points"],
+  bookmarkTime: string,
+  metric: MetricKey,
+): number | null {
+  const targetIso = sessionStartIso(points[0]?.time, bookmarkTime);
+  if (!targetIso) return null;
+  const targetMs = Date.parse(targetIso);
+  if (!Number.isFinite(targetMs)) return null;
+
+  let best = points[0];
+  let bestDiff = Infinity;
+  for (const p of points) {
+    const diff = Math.abs(Date.parse(p.time) - targetMs);
+    if (diff < bestDiff) {
+      best = p;
+      bestDiff = diff;
+    }
+  }
+  return best ? metricValue(best, metric) : null;
+}
+
 /** Format a Date as HH:MM:SS in UTC (matches CSV / bookmark clock). */
 function formatClockUtc(d: Date): string {
   const hh = String(d.getUTCHours()).padStart(2, "0");
@@ -431,12 +453,11 @@ export function SensorPlot({
             s.meta.bookmarks ?? [],
             p.time,
           );
-          const bookmarkLine = nearby ? `<br>${nearby.time} - ${nearby.note}` : "";
           return [
             `<span style="color:${color}">●</span> ${s.meta.label}`,
-            clockLabels[i],
-            `<b>${metricShort[metric].short}</b> ${ys[i].toFixed(3)} ${metricShort[metric].unit}`,
-          ].join("<br>") + bookmarkLine;
+            `${metricShort[metric].short} ${ys[i].toFixed(3)} ${metricShort[metric].unit}`,
+            ...(nearby ? [`${nearby.time} - ${nearby.note}`] : []),
+          ].join("<br>");
         });
 
         traces.push({
@@ -566,12 +587,18 @@ export function SensorPlot({
       if (!bookmarks.length) return;
 
       const bx: (string | number)[] = [];
+      const by: number[] = [];
       const texts: string[] = [];
       for (const b of bookmarks) {
         const x = bookmarkX(s.points[0]?.time, b.time, mode, startIso);
         if (x === null) continue;
+        const y = metricValueAtBookmark(s.points, b.time, metrics[0]);
+        if (y === null) continue;
         bx.push(x);
-        texts.push(`${b.time} — ${b.note}`);
+        by.push(y);
+        texts.push(
+          `<span style="color:${color}">◆</span> ${s.meta.label}<br>Bookmark ${b.time}<br>${b.note}`,
+        );
         shapes.push({
           type: "line",
           xref: "x",
@@ -586,12 +613,6 @@ export function SensorPlot({
       }
       if (!bx.length) return;
 
-      const firstYs = s.points.map((p) => metricValue(p, metrics[0]));
-      const midY =
-        firstYs.length > 0
-          ? firstYs.reduce((a, v) => a + v, 0) / firstYs.length
-          : 0;
-
       traces.push({
         type: "scatter",
         mode: "markers",
@@ -599,7 +620,7 @@ export function SensorPlot({
         legendgroup: s.meta.id,
         showlegend: false,
         x: bx,
-        y: bx.map(() => midY),
+        y: by,
         yaxis: "y",
         cliponaxis: false,
         marker: {
@@ -609,7 +630,7 @@ export function SensorPlot({
           line: { width: 1.5, color: "#ffffff" },
         },
         text: texts,
-        hoverinfo: "skip",
+        hovertemplate: "%{text}<extra></extra>",
       });
       meta.push({
         trialId: s.meta.id,
@@ -677,7 +698,7 @@ export function SensorPlot({
         font: { color: DARK_THEME.text },
       },
       margin: { t: notes ? 72 : 56, r: 24, b: 56, l: 72 },
-      hovermode: "closest",
+      hovermode: "x unified",
       hoverdistance: 20,
       uirevision: "sensor-plot",
       shapes: [...base.shapes, ...bookmarkLayer.shapes],

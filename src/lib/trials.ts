@@ -9,8 +9,31 @@ const DATA_DIR = path.join(process.cwd(), "data");
 const CSV_DIR = path.join(DATA_DIR, "csv");
 const META_PATH = path.join(DATA_DIR, "metadata.json");
 const IS_VERCEL = Boolean(process.env.VERCEL);
+const DATA_SOURCE_MODE = process.env.PLOT_DATA_SOURCE;
 
 type MetaFile = { trials: TrialMeta[] };
+
+function dataSourceMode(): "auto" | "local" | "remote" {
+  return DATA_SOURCE_MODE === "local" || DATA_SOURCE_MODE === "remote"
+    ? DATA_SOURCE_MODE
+    : "auto";
+}
+
+function shouldUseSupabase(): boolean {
+  return dataSourceMode() === "remote"
+    ? true
+    : dataSourceMode() === "local"
+      ? false
+      : isSupabaseConfigured();
+}
+
+function requireSupabaseConfigured(feature: string) {
+  if (!isSupabaseConfigured()) {
+    throw new Error(
+      `${feature} requires Supabase env vars. Set NEXT_PUBLIC_SUPABASE_URL and either SUPABASE_SERVICE_ROLE_KEY or NEXT_PUBLIC_SUPABASE_ANON_KEY.`,
+    );
+  }
+}
 
 async function ensureLocalDirs() {
   await fs.mkdir(CSV_DIR, { recursive: true });
@@ -150,13 +173,16 @@ async function listSupabaseTrials(): Promise<TrialMeta[]> {
 }
 
 export async function listTrials(): Promise<TrialMeta[]> {
-  if (isSupabaseConfigured()) {
+  if (shouldUseSupabase()) {
+    requireSupabaseConfigured("Remote trial listing");
     try {
       const remote = await listSupabaseTrials();
       if (remote.length > 0) return remote;
-      // Supabase connected but empty — fall back to bundled/local CSV inventory
+      if (dataSourceMode() === "remote") return remote;
+      // Supabase connected but empty in auto mode — fall back to bundled/local CSV inventory
     } catch {
-      // fall through to local
+      if (dataSourceMode() === "remote") throw new Error("Failed to load trials from Supabase.");
+      // fall through to local in auto mode
     }
   }
   return syncLocalInventory();
@@ -168,7 +194,8 @@ export async function updateTrial(
     Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "bookmarks">
   >,
 ): Promise<TrialMeta | null> {
-  if (isSupabaseConfigured()) {
+  if (shouldUseSupabase()) {
+    requireSupabaseConfigured("Remote trial updates");
     const sb = getSupabaseAdmin()!;
     const payload: Record<string, unknown> = {
       updated_at: new Date().toISOString(),
@@ -243,7 +270,8 @@ export async function loadManySeries(ids: string[]): Promise<TrialSeries[]> {
 async function assertFilenameAvailable(filename: string) {
   const safeName = filename.replace(/[^\w.\-]+/g, "_");
 
-  if (isSupabaseConfigured()) {
+  if (shouldUseSupabase()) {
+    requireSupabaseConfigured("Remote CSV uploads");
     const sb = getSupabaseAdmin()!;
     const { data } = await sb
       .from("trials")
@@ -281,7 +309,8 @@ export async function saveUploadedCsv(
 ): Promise<TrialMeta> {
   const safeName = await assertFilenameAvailable(filename);
 
-  if (isSupabaseConfigured()) {
+  if (shouldUseSupabase()) {
+    requireSupabaseConfigured("Remote CSV uploads");
     const sb = getSupabaseAdmin()!;
     const storagePath = `${Date.now()}_${safeName}`;
     const body = typeof content === "string" ? Buffer.from(content, "utf8") : content;
@@ -337,7 +366,8 @@ export async function saveUploadedCsv(
 }
 
 export async function deleteTrial(id: string): Promise<boolean> {
-  if (isSupabaseConfigured()) {
+  if (shouldUseSupabase()) {
+    requireSupabaseConfigured("Remote trial deletion");
     const sb = getSupabaseAdmin()!;
     const { data } = await sb.from("trials").select("*").eq("id", id).maybeSingle();
     if (!data) return false;

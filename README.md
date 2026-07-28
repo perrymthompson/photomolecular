@@ -21,6 +21,14 @@ Open [http://localhost:3000](http://localhost:3000).
 
 Sample trials (`ch1` / `ch2` for July 24, 2026 Run A) are already in `data/csv/` so plots work immediately.
 
+To preview against the live Supabase-backed dataset on localhost before pushing, put your Supabase keys in `.env.local` and set:
+
+```env
+PLOT_DATA_SOURCE=remote
+```
+
+That disables the silent fallback to `data/csv/` and makes local dev fail loudly if Supabase is unavailable, so you know you are testing the online data path.
+
 | Route | Purpose |
 |-------|---------|
 | `/` | Plot workspace — select trials, clock vs aligned time |

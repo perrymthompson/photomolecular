@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 /** Quick check: is Supabase wired up on this deployment? */
 export async function GET() {
   return NextResponse.json({
+    dataSource: process.env.PLOT_DATA_SOURCE ?? "auto",
     supabase: isSupabaseConfigured(),
     serviceRole: hasServiceRoleKey(),
     vercel: Boolean(process.env.VERCEL),

@@ -20,6 +20,7 @@ npm run dev
 NEXT_PUBLIC_SUPABASE_URL=https://xxxx.supabase.co
 NEXT_PUBLIC_SUPABASE_ANON_KEY=eyJ...
 SUPABASE_SERVICE_ROLE_KEY=eyJ...
+PLOT_DATA_SOURCE=remote
 ```
 
 6. Sync local CSVs:
@@ -29,6 +30,8 @@ npm run sync
 ```
 
 > The service role key must stay server-side only (never expose it in client code). Vercel env vars marked as Server/Secret are fine.
+>
+> `PLOT_DATA_SOURCE=remote` is useful for localhost testing before a git push: it forces the app to load from online Supabase and prevents silent fallback to `data/csv/`.
 
 ## 3. GitHub + Vercel
 
