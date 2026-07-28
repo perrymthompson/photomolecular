@@ -111,7 +111,11 @@ async function syncSupabase() {
   for (const file of files) {
     const buf = await fs.readFile(path.join(CSV_DIR, file));
     const hash = createHash("sha1").update(buf).digest("hex").slice(0, 10);
-    const storagePath = `${hash}_${file}`;
+    // Supabase Storage object keys reject some characters (e.g. `?`) because
+    // they end up in URL paths. Keep trials.filename untouched, but sanitize
+    // the *storage key* portion.
+    const safeFile = file.replace(/[^\w.\-]+/g, "_");
+    const storagePath = `${hash}_${safeFile}`;
 
     if (byFilename.has(file)) {
       console.log(`skip (already registered): ${file}`);

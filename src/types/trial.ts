@@ -45,6 +45,11 @@ export type SensorPoint = {
 export type TrialSeries = {
   meta: TrialMeta;
   points: SensorPoint[];
+  /**
+   * Plot-only bookmarks (not persisted). e.g. dynamic "Trial A end" on X runs,
+   * computed when series are loaded for replot.
+   */
+  computedBookmarks?: TrialBookmark[];
 };
 
 export type PlotMode = "calendar" | "aligned";

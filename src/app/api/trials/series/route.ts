@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { loadManySeries } from "@/lib/trials";
+import { loadManySeriesForPlot } from "@/lib/trials";
 
 export const runtime = "nodejs";
 
@@ -13,7 +13,7 @@ export async function POST(req: Request) {
         { status: 400 },
       );
     }
-    const series = await loadManySeries(ids);
+    const series = await loadManySeriesForPlot(ids);
     return NextResponse.json(series);
   } catch (e) {
     return NextResponse.json(

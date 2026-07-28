@@ -3,6 +3,14 @@ import path from "path";
 import { extractDateLabel, labelFromFilename } from "@/lib/humidity";
 import { parseChamberCsv } from "@/lib/parse-csv";
 import { BUCKET, getSupabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/client";
+import {
+  computeXRunDynamicEndBookmarks,
+} from "@/lib/x-run-dynamic-bookmarks";
+import {
+  collectMirroredBookmarks,
+  findXRunTrial,
+  mergeMirroredBookmarks,
+} from "@/lib/x-run-mirror";
 import type { TrialBookmark, TrialMeta, TrialSeries } from "@/types/trial";
 
 const DATA_DIR = path.join(process.cwd(), "data");
@@ -188,7 +196,30 @@ export async function listTrials(): Promise<TrialMeta[]> {
   return syncLocalInventory();
 }
 
-export async function updateTrial(
+async function getTrialById(id: string): Promise<TrialMeta | null> {
+  if (shouldUseSupabase()) {
+    requireSupabaseConfigured("Remote trial lookup");
+    const sb = getSupabaseAdmin()!;
+    const { data, error } = await sb
+      .from("trials")
+      .select("*")
+      .eq("id", id)
+      .maybeSingle();
+    if (error) throw new Error(error.message);
+    if (!data) return null;
+    return rowToMeta(data as Record<string, unknown>);
+  }
+
+  const meta = await readLocalMeta();
+  const trial = meta.trials.find((t) => t.id === id);
+  if (!trial) return null;
+  return {
+    ...trial,
+    bookmarks: normalizeBookmarks(trial.bookmarks),
+  };
+}
+
+async function writeTrialUpdate(
   id: string,
   patch: Partial<
     Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "bookmarks">
@@ -238,6 +269,51 @@ export async function updateTrial(
   return meta.trials[idx];
 }
 
+/** Copy new session starts / bookmarks from A/B/C runs onto the same-day X run. */
+async function mirrorBookmarksOntoXRun(
+  source: TrialMeta,
+  patch: Partial<
+    Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "bookmarks">
+  >,
+): Promise<void> {
+  const additions = collectMirroredBookmarks(
+    source,
+    patch,
+    source.bookmarks ?? [],
+  );
+  if (!additions.length) return;
+
+  const xTrial = findXRunTrial(await listTrials(), source);
+  if (!xTrial) return;
+
+  const merged = mergeMirroredBookmarks(xTrial.bookmarks ?? [], additions);
+  if (!merged) return;
+
+  await writeTrialUpdate(xTrial.id, { bookmarks: merged });
+}
+
+export async function updateTrial(
+  id: string,
+  patch: Partial<
+    Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "bookmarks">
+  >,
+): Promise<TrialMeta | null> {
+  const existing = await getTrialById(id);
+  if (!existing) return null;
+
+  const updated = await writeTrialUpdate(id, patch);
+  if (!updated) return null;
+
+  if (
+    patch.sessionStartTime !== undefined ||
+    patch.bookmarks !== undefined
+  ) {
+    await mirrorBookmarksOntoXRun(existing, patch);
+  }
+
+  return updated;
+}
+
 async function readCsvText(meta: TrialMeta): Promise<string> {
   if (meta.storagePath.startsWith("local:")) {
     const file = meta.storagePath.replace(/^local:/, "");
@@ -265,6 +341,37 @@ export async function loadManySeries(ids: string[]): Promise<TrialSeries[]> {
     if (s) out.push(s);
   }
   return out;
+}
+
+/**
+ * Load series for plotting and attach computed X-run end bookmarks (replot only).
+ */
+export async function loadManySeriesForPlot(ids: string[]): Promise<TrialSeries[]> {
+  const cache = new Map<string, TrialSeries | null>();
+  const out: TrialSeries[] = [];
+
+  for (const id of ids) {
+    const s = await loadTrialSeries(id);
+    cache.set(id, s);
+    if (s) out.push(s);
+  }
+
+  const allTrials = await listTrials();
+  const enriched: TrialSeries[] = [];
+
+  for (const s of out) {
+    const computed = await computeXRunDynamicEndBookmarks(
+      s.meta,
+      allTrials,
+      async (id) => loadTrialSeries(id),
+      cache,
+    );
+    enriched.push(
+      computed.length ? { ...s, computedBookmarks: computed } : s,
+    );
+  }
+
+  return enriched;
 }
 
 async function assertFilenameAvailable(filename: string) {

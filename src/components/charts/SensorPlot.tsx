@@ -45,6 +45,7 @@ import type {
 } from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
+import { plotBookmarksForSeries } from "@/lib/x-run-dynamic-bookmarks";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { uniqueDateLabels } from "@/lib/trial-sort";
@@ -99,7 +100,7 @@ function pointsFingerprint(series: TrialSeries[]): string {
 function bookmarksFingerprint(series: TrialSeries[]): string {
   return series
     .map((s) => {
-      const bms = s.meta.bookmarks ?? [];
+      const bms = plotBookmarksForSeries(s);
       return `${s.meta.id}:${bms.map((b) => `${b.id}:${b.time}:${b.note}`).join(",")}`;
     })
     .join("|");
@@ -583,7 +584,7 @@ export function SensorPlot({
         s.points[0]?.time,
         s.meta.sessionStartTime,
       );
-      const bookmarks = s.meta.bookmarks ?? [];
+      const bookmarks = plotBookmarksForSeries(s);
       if (!bookmarks.length) return;
 
       const bx: (string | number)[] = [];
