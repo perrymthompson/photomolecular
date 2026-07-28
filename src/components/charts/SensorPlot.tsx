@@ -48,7 +48,7 @@ import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { uniqueDateLabels } from "@/lib/trial-sort";
-import type { MetricKey, PlotMode, TrialSeries } from "@/types/trial";
+import type { MetricKey, PlotMode, TrialBookmark, TrialSeries } from "@/types/trial";
 import { METRIC_LABELS } from "@/types/trial";
 
 export type PlotTimePick = {
@@ -79,6 +79,7 @@ type CurveMeta = {
   trialId: string;
   kind: "raw" | "smooth" | "bookmark";
   color: string;
+  metric?: MetricKey;
   bookmarkCount?: number;
 };
 
@@ -261,6 +262,40 @@ function pickNearestTrialPoint(
   return best ?? pool[0] ?? null;
 }
 
+/**
+ * Same as `pickNearestTrialPoint`, but only considers raw (value) points.
+ * Used for the single-bubble hover overlay so we always show a value, not
+ * the bookmark diamond trace.
+ */
+function pickNearestRawTrialPoint(
+  points: PlotDatum[],
+  event: MouseEvent,
+  curveMeta: CurveMeta[],
+): PlotDatum | null {
+  if (!points.length) return null;
+
+  const plotEl = (event.target as HTMLElement | null)?.closest?.(
+    ".js-plotly-plot",
+  ) as HTMLElement | null;
+  const rect = plotEl?.getBoundingClientRect();
+  const my = event.clientY - (rect?.top ?? 0);
+
+  let best: PlotDatum | null = null;
+  let bestDist = Infinity;
+  for (const pt of points) {
+    const m = curveMeta[pt.curveNumber];
+    if (!m || m.kind !== "raw" || !m.trialId) continue;
+    const pix = datumToPixels(pt);
+    if (!pix) continue;
+    const dist = Math.abs(pix.y - my);
+    if (dist < bestDist) {
+      bestDist = dist;
+      best = pt;
+    }
+  }
+  return best;
+}
+
 function paddedRange(vals: number[]): [number, number] {
   if (vals.length === 0) return [0, 1];
   let lo = vals[0];
@@ -295,10 +330,13 @@ export function SensorPlot({
     onInitialized?: (figure: unknown, graphDiv: HTMLElement) => void;
     onUpdate?: (figure: unknown, graphDiv: HTMLElement) => void;
     onClick?: (e: Readonly<PlotMouseEvent>) => void;
+    onHover?: (e: any) => void;
+    onUnhover?: () => void;
   }> | null>(null);
 
   const curveMetaRef = useRef<CurveMeta[]>([]);
   const graphDivRef = useRef<HTMLElement | null>(null);
+  const plotWrapRef = useRef<HTMLDivElement | null>(null);
   const lowessCacheRef = useRef(
     new Map<string, { x: number[]; y: number[] }>(),
   );
@@ -309,6 +347,39 @@ export function SensorPlot({
   const pointsKey = useMemo(() => pointsFingerprint(series), [series]);
   const bookmarksKey = useMemo(() => bookmarksFingerprint(series), [series]);
   const notesKey = useMemo(() => notesFingerprint(series), [series]);
+
+  const trialLabelById = useMemo(() => {
+    const map = new Map<string, string>();
+    for (const s of series) map.set(s.meta.id, s.meta.label);
+    return map;
+  }, [series]);
+
+  const firstSampleIsoByTrialId = useMemo(() => {
+    const map = new Map<string, string | undefined>();
+    for (const s of series) map.set(s.meta.id, s.points[0]?.time);
+    return map;
+  }, [series]);
+
+  const bookmarksByTrialId = useMemo(() => {
+    const map = new Map<string, TrialBookmark[]>();
+    for (const s of series) map.set(s.meta.id, s.meta.bookmarks ?? []);
+    return map;
+  }, [series]);
+
+  const metricShort: Record<MetricKey, { short: string; unit: string }> = {
+    absHumidity: { short: "AH", unit: "g/m³" },
+    rh: { short: "RH", unit: "%RH" },
+    temp: { short: "Temp", unit: "°C" },
+  };
+
+  const hoverBubbleRef = useRef<HTMLDivElement | null>(null);
+  const hoverDotRef = useRef<HTMLSpanElement | null>(null);
+  const hoverTrialRef = useRef<HTMLSpanElement | null>(null);
+  const hoverTimeRef = useRef<HTMLSpanElement | null>(null);
+  const hoverMetricRef = useRef<HTMLSpanElement | null>(null);
+  const hoverValueRef = useRef<HTMLSpanElement | null>(null);
+  const hoverUnitRef = useRef<HTMLSpanElement | null>(null);
+  const hoverBookmarkRef = useRef<HTMLDivElement | null>(null);
 
   useEffect(() => {
     let cancelled = false;
@@ -408,12 +479,15 @@ export function SensorPlot({
           yaxis: axisY,
           line: { color, width: showSmooth ? 1 : 2 },
           opacity: showSmooth ? 0.35 : 0.9,
-          hovertemplate:
-            mode === "aligned"
-              ? `%{x:.1f} min<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`
-              : `%{customdata}<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`,
+          // We render our own single-bubble hover overlay (less clutter).
+          hoverinfo: "skip",
         });
-        meta.push({ trialId: s.meta.id, kind: "raw", color });
+        meta.push({
+          trialId: s.meta.id,
+          kind: "raw",
+          color,
+          metric,
+        });
 
         if (showSmooth) {
           const xNum =
@@ -443,7 +517,7 @@ export function SensorPlot({
             line: { color, width: 2.4 },
             hoverinfo: "skip",
           });
-          meta.push({ trialId: s.meta.id, kind: "smooth", color });
+          meta.push({ trialId: s.meta.id, kind: "smooth", color, metric });
         }
 
         if (mode === "calendar" && startIso && mi === 0) {
@@ -563,13 +637,14 @@ export function SensorPlot({
           line: { width: 1.5, color: "#ffffff" },
         },
         text: texts,
-        hovertemplate: `%{text}<extra>${name}</extra>`,
+        hoverinfo: "skip",
       });
       meta.push({
         trialId: s.meta.id,
         kind: "bookmark",
         color,
         bookmarkCount: bx.length,
+        metric: metrics[0],
       });
     });
 
@@ -697,6 +772,141 @@ export function SensorPlot({
     onTimePick({ trialId: m.trialId, time });
   };
 
+  const findNearbyBookmark = (
+    trialId: string,
+    hoverX: string | number | Date,
+  ): { time: string; note: string } | null => {
+    const bms = bookmarksByTrialId.get(trialId) ?? [];
+    if (!bms.length) return null;
+
+    const startIso = sessionByTrial.get(trialId) ?? null;
+    const firstIso = firstSampleIsoByTrialId.get(trialId);
+    if (!firstIso) return null;
+
+    const thresholdMs = 2500; // "near enough" window
+
+    if (mode === "calendar") {
+      const hoverMs =
+        hoverX instanceof Date
+          ? hoverX.getTime()
+          : typeof hoverX === "number"
+            ? hoverX
+            : Date.parse(String(hoverX));
+      if (!Number.isFinite(hoverMs)) return null;
+
+      let best: { bm: TrialBookmark; diffMs: number } | null = null;
+      for (const bm of bms) {
+        const bx = bookmarkX(firstIso, bm.time, mode, startIso);
+        if (bx === null) continue;
+        const bxMs = typeof bx === "number" ? bx : Date.parse(String(bx));
+        if (!Number.isFinite(bxMs)) continue;
+        const diffMs = Math.abs(bxMs - hoverMs);
+        if (!best || diffMs < best.diffMs) best = { bm, diffMs };
+      }
+      if (!best || best.diffMs > thresholdMs) return null;
+      return { time: best.bm.time, note: best.bm.note };
+    }
+
+    const hoverMins = typeof hoverX === "number" ? hoverX : Number(hoverX);
+    if (!Number.isFinite(hoverMins)) return null;
+    const thresholdMins = thresholdMs / 60000;
+
+    let best: { bm: TrialBookmark; diffMins: number } | null = null;
+    for (const bm of bms) {
+      const bx = bookmarkX(firstIso, bm.time, mode, startIso);
+      if (bx === null) continue;
+      const bxMins = typeof bx === "number" ? bx : Number(bx);
+      if (!Number.isFinite(bxMins)) continue;
+      const diffMins = Math.abs(bxMins - hoverMins);
+      if (!best || diffMins < best.diffMins) best = { bm, diffMins };
+    }
+    if (!best || best.diffMins > thresholdMins) return null;
+    return { time: best.bm.time, note: best.bm.note };
+  };
+
+  const hideHoverBubble = () => {
+    if (!hoverBubbleRef.current) return;
+    hoverBubbleRef.current.style.display = "none";
+  };
+
+  const handleHover = (e: any) => {
+    const wrap = plotWrapRef.current;
+    const bubble = hoverBubbleRef.current;
+    const dot = hoverDotRef.current;
+    const trialEl = hoverTrialRef.current;
+    const timeEl = hoverTimeRef.current;
+    const metricEl = hoverMetricRef.current;
+    const valueEl = hoverValueRef.current;
+    const unitEl = hoverUnitRef.current;
+    const bookmarkEl = hoverBookmarkRef.current;
+
+    if (!wrap || !bubble || !dot || !trialEl || !timeEl || !metricEl || !valueEl || !unitEl || !bookmarkEl) {
+      return;
+    }
+
+    const points = (e?.points ?? []) as PlotDatum[];
+    const mev = e?.event as MouseEvent | undefined;
+    if (!points.length || !mev) {
+      hideHoverBubble();
+      return;
+    }
+
+    const rawPt = pickNearestRawTrialPoint(points, mev, curveMetaRef.current);
+    if (!rawPt) {
+      hideHoverBubble();
+      return;
+    }
+
+    const meta = curveMetaRef.current[rawPt.curveNumber];
+    if (!meta?.trialId || !meta.metric) {
+      hideHoverBubble();
+      return;
+    }
+
+    const trialId = meta.trialId;
+    const metric = meta.metric;
+    const value = typeof rawPt.y === "number" ? rawPt.y : Number(rawPt.y);
+    if (!Number.isFinite(value)) {
+      hideHoverBubble();
+      return;
+    }
+
+    const hoverX = spikeXFromEvent(points, mev);
+    if (hoverX === null) {
+      hideHoverBubble();
+      return;
+    }
+    const startIso = sessionByTrial.get(trialId) ?? null;
+    const clockTime = xToClockTime(hoverX, mode, startIso);
+
+    const nearbyBm = findNearbyBookmark(trialId, hoverX);
+
+    // Bubble position (relative to the plot wrapper).
+    const rect = wrap.getBoundingClientRect();
+    const localX = mev.clientX - rect.left;
+    const localY = mev.clientY - rect.top;
+
+    bubble.style.display = "block";
+    bubble.style.left = `${localX}px`;
+    bubble.style.top = `${localY}px`;
+
+    dot.style.backgroundColor = meta.color;
+    trialEl.textContent = trialLabelById.get(trialId) ?? trialId;
+    timeEl.textContent = clockTime ? clockTime : "";
+
+    metricEl.textContent = metricShort[metric].short;
+    valueEl.textContent = value.toFixed(3);
+    unitEl.textContent = metricShort[metric].unit;
+
+    if (nearbyBm) {
+      bookmarkEl.style.display = "block";
+      bookmarkEl.textContent = `${nearbyBm.time} — ${nearbyBm.note}`;
+    } else {
+      bookmarkEl.style.display = "none";
+      bookmarkEl.textContent = "";
+    }
+  };
+
   if (series.length === 0) {
     return (
       <div className="flex h-80 items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
@@ -717,7 +927,28 @@ export function SensorPlot({
   const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}`;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
+    <div
+      ref={plotWrapRef}
+      className="relative overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]"
+    >
+      <div
+        ref={hoverBubbleRef}
+        className="pointer-events-none absolute z-50 hidden max-w-[260px] rounded border border-[#3a3b3f] bg-[#16171a] px-3 py-2 text-xs text-[#e8e8e8] shadow"
+        style={{ transform: "translate(-50%,-110%)" }}
+      >
+        <div className="flex items-center gap-2">
+          <span ref={hoverDotRef} className="inline-block h-2.5 w-2.5 rounded-full" />
+          <span ref={hoverTrialRef} className="font-medium" />
+          <span ref={hoverTimeRef} className="text-[#b5b5b8]" />
+        </div>
+        <div className="mt-1">
+          <span ref={hoverMetricRef} className="font-semibold" />
+          <span ref={hoverValueRef} className="ml-1" />
+          <span ref={hoverUnitRef} className="ml-2 text-[#b5b5b8]" />
+        </div>
+        <div ref={hoverBookmarkRef} className="mt-1 whitespace-pre-wrap text-[#b5b5b8]" style={{ display: "none" }} />
+      </div>
+
       <PlotComponent
         key={mountKey}
         data={data}
@@ -742,6 +973,8 @@ export function SensorPlot({
           graphDivRef.current = gd;
         }}
         onClick={handleClick}
+        onHover={handleHover}
+        onUnhover={hideHoverBubble}
       />
     </div>
   );
