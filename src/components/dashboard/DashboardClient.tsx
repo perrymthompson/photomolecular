@@ -6,7 +6,6 @@ import { SyncFolderButton } from "@/components/dashboard/SyncFolderButton";
 import { TrialTree } from "@/components/dashboard/TrialTree";
 import { sortTrials } from "@/lib/trial-sort";
 import type { TrialMeta } from "@/types/trial";
-import { DataImportEditor } from "@/components/dashboard/DataImportEditor";
 
 const HIDDEN_TRIAL_FILENAMES = new Set(["DataImport.csv"]);
 
@@ -63,8 +62,6 @@ export function DashboardClient() {
       />
 
       <SyncFolderButton onSynced={() => void refresh()} />
-
-      <DataImportEditor onImported={() => void refresh()} />
 
       {loadError ? (
         <p className="rounded border border-[#E2574C]/40 bg-[#E2574C]/10 px-3 py-2 text-sm text-[#E2574C]">

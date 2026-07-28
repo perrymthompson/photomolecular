@@ -1,6 +1,5 @@
-import { promises as fs } from "fs";
-import path from "path";
 import { execFile } from "child_process";
+import path from "path";
 import { promisify } from "util";
 import { NextResponse } from "next/server";
 
@@ -8,7 +7,6 @@ export const runtime = "nodejs";
 
 const execFileP = promisify(execFile);
 
-const IMPORT_FILE = path.join(process.cwd(), "data", "csv", "DataImport.csv");
 const SCRIPT = path.join(process.cwd(), "scripts", "import-dataimport.mjs");
 
 async function runImportScript(): Promise<{ stdout: string; stderr: string }> {
@@ -20,30 +18,8 @@ async function runImportScript(): Promise<{ stdout: string; stderr: string }> {
   return { stdout: String(result.stdout ?? ""), stderr: String(result.stderr ?? "") };
 }
 
-export async function GET() {
+export async function POST() {
   try {
-    const text = await fs.readFile(IMPORT_FILE, "utf8");
-    return NextResponse.json({ csvText: text, ok: true });
-  } catch (e) {
-    return NextResponse.json(
-      { ok: false, error: e instanceof Error ? e.message : "Failed to load DataImport.csv" },
-      { status: 500 },
-    );
-  }
-}
-
-export async function POST(req: Request) {
-  try {
-    const body = (await req.json()) as { csvText?: string };
-    const csvText = body.csvText;
-    if (typeof csvText !== "string") {
-      return NextResponse.json({ ok: false, error: "Missing csvText" }, { status: 400 });
-    }
-
-    // Ensure the target file exists/gets updated before running the import script.
-    await fs.mkdir(path.dirname(IMPORT_FILE), { recursive: true });
-    await fs.writeFile(IMPORT_FILE, csvText, "utf8");
-
     const { stdout, stderr } = await runImportScript();
     return NextResponse.json({ ok: true, stdout, stderr });
   } catch (e) {

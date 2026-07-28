@@ -7,6 +7,13 @@ type Props = {
   onSynced: () => void;
 };
 
+type DataImportResponse = {
+  ok: boolean;
+  stdout?: string;
+  stderr?: string;
+  error?: string;
+};
+
 export function SyncFolderButton({ onSynced }: Props) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -43,6 +50,29 @@ export function SyncFolderButton({ onSynced }: Props) {
     }
   };
 
+  const runDataImport = async () => {
+    setBusy(true);
+    setMessage(null);
+    try {
+      const res = await fetch("/api/csv/dataimport", { method: "POST" });
+      const body = (await res.json()) as DataImportResponse;
+      if (!res.ok || !body.ok) {
+        throw new Error(body.error ?? "DataImport run failed");
+      }
+      setOk(true);
+      const lines: string[] = ["Applied DataImport.csv updates."];
+      if (body.stdout?.trim()) lines.push(body.stdout.trim());
+      if (body.stderr?.trim()) lines.push(`stderr:\n${body.stderr.trim()}`);
+      setMessage(lines.join("\n"));
+      onSynced();
+    } catch (e) {
+      setOk(false);
+      setMessage(e instanceof Error ? e.message : "DataImport run failed");
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <div className="rounded-lg border border-[#3a3b3f] bg-[#1e1f22] p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
@@ -54,7 +84,8 @@ export function SyncFolderButton({ onSynced }: Props) {
             registers new files.{" "}
             <strong className="font-normal text-[#b5b5b8]">Refresh data</strong>{" "}
             re-uploads changed CSVs and keeps notes / bookmarks / session
-            starts.
+            starts. <strong className="font-normal text-[#b5b5b8]">Run DataImport</strong>{" "}
+            applies the `DataImport.csv` mapping to matching trials.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
@@ -74,6 +105,15 @@ export function SyncFolderButton({ onSynced }: Props) {
             className="rounded border border-[#4C8FD1] px-4 py-2 text-sm font-medium text-[#4C8FD1] hover:bg-[#4C8FD1]/10 disabled:opacity-50"
           >
             {busy ? "Working…" : "Refresh data"}
+          </button>
+          <button
+            type="button"
+            disabled={busy}
+            onClick={() => void runDataImport()}
+            title="Apply plot labels, notes, and session starts from DataImport.csv"
+            className="rounded border border-[#7B68EE] px-4 py-2 text-sm font-medium text-[#C7BEFF] hover:bg-[#7B68EE]/10 disabled:opacity-50"
+          >
+            {busy ? "Working…" : "Run DataImport"}
           </button>
         </div>
       </div>
