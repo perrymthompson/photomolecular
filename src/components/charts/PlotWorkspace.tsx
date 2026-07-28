@@ -2,7 +2,10 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
-import { PlotBookmarkAdd } from "@/components/charts/PlotBookmarkAdd";
+import {
+  PlotBookmarkAdd,
+  type BookmarkPrefill,
+} from "@/components/charts/PlotBookmarkAdd";
 import { TrialSelector } from "@/components/charts/TrialSelector";
 import { selectionSpansMultipleRuns, sortTrials } from "@/lib/trial-sort";
 import type { MetricKey, PlotMode, TrialMeta, TrialSeries } from "@/types/trial";
@@ -12,17 +15,59 @@ const SensorPlot = dynamic(
   { ssr: false },
 );
 
+function ToggleGroup({
+  labelOn,
+  labelOff,
+  on,
+  onChange,
+  title,
+}: {
+  labelOn: string;
+  labelOff: string;
+  on: boolean;
+  onChange: (next: boolean) => void;
+  title?: string;
+}) {
+  return (
+    <div className="flex rounded border border-[#3a3b3f] p-0.5" title={title}>
+      <button
+        type="button"
+        onClick={() => onChange(true)}
+        className={`rounded px-3 py-1.5 text-xs ${
+          on ? "bg-[#2a2b2e] text-white" : "text-[#b5b5b8] hover:text-white"
+        }`}
+      >
+        {labelOn}
+      </button>
+      <button
+        type="button"
+        onClick={() => onChange(false)}
+        className={`rounded px-3 py-1.5 text-xs ${
+          !on ? "bg-[#2a2b2e] text-white" : "text-[#b5b5b8] hover:text-white"
+        }`}
+      >
+        {labelOff}
+      </button>
+    </div>
+  );
+}
+
 export function PlotWorkspace() {
   const [trials, setTrials] = useState<TrialMeta[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [series, setSeries] = useState<TrialSeries[]>([]);
   const [mode, setMode] = useState<PlotMode>("calendar");
   const [view, setView] = useState<"combined" | "ah" | "rh" | "temp">("combined");
+  const [showSmooth, setShowSmooth] = useState(true);
+  const [showBookmarks, setShowBookmarks] = useState(true);
   const [loading, setLoading] = useState(false);
   const [plotBusy, setPlotBusy] = useState(false);
   const [plotRevision, setPlotRevision] = useState(0);
   const [error, setError] = useState<string | null>(null);
   const [modeTouched, setModeTouched] = useState(false);
+  const [bookmarkPrefill, setBookmarkPrefill] = useState<BookmarkPrefill | null>(
+    null,
+  );
 
   useEffect(() => {
     fetch("/api/trials")
@@ -122,6 +167,16 @@ export function PlotWorkspace() {
     bumpPlot();
   };
 
+  const setSmoothAndRefresh = (next: boolean) => {
+    setShowSmooth(next);
+    bumpPlot();
+  };
+
+  const setBookmarksAndRefresh = (next: boolean) => {
+    setShowBookmarks(next);
+    bumpPlot();
+  };
+
   const plotHeight = mode === "aligned" || view !== "combined" ? 480 : 720;
 
   return (
@@ -192,6 +247,22 @@ export function PlotWorkspace() {
             </button>
           </div>
 
+          <ToggleGroup
+            labelOn="Fit on"
+            labelOff="Fit off"
+            on={showSmooth}
+            onChange={setSmoothAndRefresh}
+            title="Toggle LOWESS smooth fit curves"
+          />
+
+          <ToggleGroup
+            labelOn="Bookmarks on"
+            labelOff="Bookmarks off"
+            on={showBookmarks}
+            onChange={setBookmarksAndRefresh}
+            title="Toggle time bookmark markers"
+          />
+
           {loading || plotBusy ? (
             <span className="flex items-center gap-2 text-xs text-[#8a8a8d]">
               <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#4C8FD1] border-t-transparent" />
@@ -223,6 +294,15 @@ export function PlotWorkspace() {
               metrics={mode === "aligned" ? ["absHumidity"] : metrics}
               height={plotHeight}
               plotRevision={plotRevision}
+              showSmooth={showSmooth}
+              showBookmarks={showBookmarks}
+              onTimePick={({ trialId, time }) => {
+                setBookmarkPrefill({
+                  trialId,
+                  time,
+                  nonce: Date.now(),
+                });
+              }}
             />
           ) : (
             <div className="flex h-[480px] items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
@@ -236,6 +316,7 @@ export function PlotWorkspace() {
         {visibleSeries.length > 0 ? (
           <PlotBookmarkAdd
             series={visibleSeries}
+            prefill={bookmarkPrefill}
             onSaved={(updated) => {
               setTrials((prev) =>
                 sortTrials(prev.map((t) => (t.id === updated.id ? updated : t))),

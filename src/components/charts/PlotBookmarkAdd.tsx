@@ -1,20 +1,39 @@
 "use client";
 
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import type { TrialMeta, TrialSeries } from "@/types/trial";
+
+export type BookmarkPrefill = {
+  trialId: string;
+  time: string;
+  /** Bumps so the same time clicked twice still applies. */
+  nonce: number;
+};
 
 type Props = {
   series: TrialSeries[];
   onSaved: (t: TrialMeta) => void;
+  /** Filled when the user clicks a time on the plot (does not auto-add). */
+  prefill?: BookmarkPrefill | null;
 };
 
-export function PlotBookmarkAdd({ series, onSaved }: Props) {
+export function PlotBookmarkAdd({ series, onSaved, prefill }: Props) {
   const [trialId, setTrialId] = useState(series[0]?.meta.id ?? "");
   const [time, setTime] = useState("");
   const [note, setNote] = useState("");
   const [busy, setBusy] = useState(false);
   const [status, setStatus] = useState<string | null>(null);
   const [statusOk, setStatusOk] = useState(false);
+
+  useEffect(() => {
+    if (!prefill) return;
+    if (series.some((s) => s.meta.id === prefill.trialId)) {
+      setTrialId(prefill.trialId);
+    }
+    setTime(prefill.time);
+    setStatusOk(true);
+    setStatus("Time filled from plot click — add a note and click Add.");
+  }, [prefill, series]);
 
   if (series.length === 0) return null;
 
@@ -67,8 +86,8 @@ export function PlotBookmarkAdd({ series, onSaved }: Props) {
     <div className="rounded-lg border border-[#3a3b3f] bg-[#16171a] p-4">
       <h3 className="text-sm font-medium text-white">Add plot bookmark</h3>
       <p className="mt-1 text-xs text-[#8a8a8d]">
-        Quick note at a clock time for a trial currently plotted. Full edit list
-        is on the Dashboard.
+        Quick note at a clock time for a trial currently plotted. Click a time
+        on the plot to fill Trial + Time. Full edit list is on the Dashboard.
       </p>
       <div className="mt-3 grid gap-3 sm:grid-cols-[1.2fr_0.8fr_1.4fr_auto]">
         <label className="block text-xs text-[#b5b5b8]">

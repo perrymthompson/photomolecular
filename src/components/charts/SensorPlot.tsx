@@ -28,18 +28,25 @@
  *
  * BOOKMARKS:
  *   Vertical markers at clock times (HH:MM[:SS] on the trial's data date).
- *   Hover the diamond markers to read the note text.
+ *   Hover the diamond markers to read the note text; active diamond enlarges
+ *   and draws on top. Click a time on the plot to fill the bookmark form.
  * =============================================================================
  */
 
-import { useEffect, useMemo, useState, type ComponentType } from "react";
-import type { Data, Layout, LayoutAxis, Shape } from "plotly.js";
+import { useEffect, useMemo, useRef, useState, type ComponentType } from "react";
+import type { Data, Layout, LayoutAxis, PlotMouseEvent, Shape } from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { uniqueDateLabels } from "@/lib/trial-sort";
 import type { MetricKey, PlotMode, TrialSeries } from "@/types/trial";
 import { METRIC_LABELS } from "@/types/trial";
+
+export type PlotTimePick = {
+  trialId: string;
+  /** Clock time HH:MM:SS for the bookmark form. */
+  time: string;
+};
 
 type Props = {
   series: TrialSeries[];
@@ -49,6 +56,25 @@ type Props = {
   height?: number;
   /** Bumped by parent to force Plotly remount after view/mode changes. */
   plotRevision?: number;
+  /** Draw LOWESS smooth curves (default true). */
+  showSmooth?: boolean;
+  /** Draw bookmark diamonds + guide lines (default true). */
+  showBookmarks?: boolean;
+  /** Click a point/time → fill bookmark form (does not create a bookmark). */
+  onTimePick?: (pick: PlotTimePick) => void;
+};
+
+type CurveMeta = {
+  trialId: string;
+  kind: "raw" | "smooth" | "bookmark" | "highlight";
+  color: string;
+};
+
+type HoverBookmark = {
+  x: string | number;
+  y: number;
+  color: string;
+  text: string;
 };
 
 /** Pick the numeric y-value for a metric from one sample point. */
@@ -82,12 +108,49 @@ function bookmarkX(
   return (Date.parse(iso) - Date.parse(sessionStart)) / 60000;
 }
 
+/** Format a Date as HH:MM:SS in UTC (matches how we store sample clocks). */
+function formatClockUtc(d: Date): string {
+  const hh = String(d.getUTCHours()).padStart(2, "0");
+  const mm = String(d.getUTCMinutes()).padStart(2, "0");
+  const ss = String(d.getUTCSeconds()).padStart(2, "0");
+  return `${hh}:${mm}:${ss}`;
+}
+
+/**
+ * Convert a Plotly x value into HH:MM:SS for the bookmark form.
+ * Calendar: x is ISO/Date. Aligned: x is minutes since session start.
+ */
+function xToClockTime(
+  x: string | number | Date,
+  mode: PlotMode,
+  sessionStartIsoStr: string | null,
+): string | null {
+  if (mode === "aligned") {
+    if (!sessionStartIsoStr) return null;
+    const mins = typeof x === "number" ? x : Number(x);
+    if (!Number.isFinite(mins)) return null;
+    return formatClockUtc(
+      new Date(Date.parse(sessionStartIsoStr) + mins * 60_000),
+    );
+  }
+
+  let ms: number;
+  if (x instanceof Date) ms = x.getTime();
+  else if (typeof x === "number") ms = x;
+  else ms = Date.parse(String(x));
+  if (!Number.isFinite(ms)) return null;
+  return formatClockUtc(new Date(ms));
+}
+
 export function SensorPlot({
   series,
   mode,
   metrics = ["absHumidity", "rh", "temp"],
   height = 720,
   plotRevision = 0,
+  showSmooth = true,
+  showBookmarks = true,
+  onTimePick,
 }: Props) {
   // Lazy-load Plotly only when we have data (keeps initial bundle smaller).
   const [PlotComponent, setPlotComponent] = useState<ComponentType<{
@@ -96,7 +159,13 @@ export function SensorPlot({
     config: Record<string, unknown>;
     style: Record<string, string | number>;
     useResizeHandler?: boolean;
+    onClick?: (e: Readonly<PlotMouseEvent>) => void;
+    onHover?: (e: Readonly<PlotMouseEvent>) => void;
+    onUnhover?: (e: Readonly<PlotMouseEvent>) => void;
   }> | null>(null);
+
+  const [hoverBm, setHoverBm] = useState<HoverBookmark | null>(null);
+  const curveMetaRef = useRef<CurveMeta[]>([]);
 
   useEffect(() => {
     let cancelled = false;
@@ -114,14 +183,32 @@ export function SensorPlot({
     };
   }, [series.length]);
 
+  // Clear hover highlight when bookmarks are hidden or data changes.
+  useEffect(() => {
+    setHoverBm(null);
+  }, [showBookmarks, series, mode, metrics, plotRevision]);
+
   // One distinct color per trial id (not per "ch1" label — labels can collide).
   const colors = useMemo(
     () => trialColorMapById(series.map((s) => ({ id: s.meta.id, label: s.meta.label }))),
     [series],
   );
 
-  const { data, layout } = useMemo(() => {
+  // sessionStartIso per trial — used when converting aligned-mode clicks → clock.
+  const sessionByTrial = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const s of series) {
+      map.set(
+        s.meta.id,
+        sessionStartIso(s.points[0]?.time, s.meta.sessionStartTime),
+      );
+    }
+    return map;
+  }, [series]);
+
+  const { data, layout, meta } = useMemo(() => {
     const traces: Data[] = [];
+    const meta: CurveMeta[] = [];
     const shapes: Partial<Shape>[] = [];
     const n = metrics.length;
 
@@ -136,7 +223,7 @@ export function SensorPlot({
         s.meta.sessionStartTime,
       );
 
-      // ---- Sensor metric traces (raw faint + LOWESS thick) ----------------
+      // ---- Sensor metric traces (raw faint + optional LOWESS thick) -------
       metrics.forEach((metric, mi) => {
         // Stacked panels: first metric uses "y", then "y2", "y3", …
         const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
@@ -151,7 +238,7 @@ export function SensorPlot({
           xs = s.points.map((p) => (Date.parse(p.time) - t0) / 60000);
         }
 
-        // Raw data — thin, semi-transparent (matches R aesthetic).
+        // Raw data — thicker/more opaque when smooth is off so the series stays readable.
         traces.push({
           type: "scatter",
           mode: "lines",
@@ -161,38 +248,41 @@ export function SensorPlot({
           x: xs,
           y: ys,
           yaxis: axisY,
-          line: { color, width: 1 },
-          opacity: 0.35,
+          line: { color, width: showSmooth ? 1 : 2 },
+          opacity: showSmooth ? 0.35 : 0.9,
           hovertemplate:
             mode === "aligned"
               ? `%{x:.1f} min<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`
               : `%{x|%H:%M:%S}<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`,
         });
+        meta.push({ trialId: s.meta.id, kind: "raw", color });
 
-        // LOWESS smooth — span 0.08 of points (same idea as R loess span).
-        // lowess() needs numeric x; for calendar mode we pass epoch ms.
-        const xNum =
-          mode === "aligned"
-            ? (xs as number[])
-            : xsCal.map((t) => Date.parse(t));
-        const smooth = lowess(xNum, ys, LOWESS_SPAN);
-        const smoothX =
-          mode === "aligned"
-            ? smooth.x
-            : smooth.x.map((t) => new Date(t).toISOString());
+        if (showSmooth) {
+          // LOWESS smooth — span 0.08 of points (same idea as R loess span).
+          const xNum =
+            mode === "aligned"
+              ? (xs as number[])
+              : xsCal.map((t) => Date.parse(t));
+          const smooth = lowess(xNum, ys, LOWESS_SPAN);
+          const smoothX =
+            mode === "aligned"
+              ? smooth.x
+              : smooth.x.map((t) => new Date(t).toISOString());
 
-        traces.push({
-          type: "scatter",
-          mode: "lines",
-          name: `${name} (smooth)`,
-          legendgroup: group,
-          showlegend: false,
-          x: smoothX,
-          y: smooth.y,
-          yaxis: axisY,
-          line: { color, width: 2.4 },
-          hoverinfo: "skip", // hover shows raw points only
-        });
+          traces.push({
+            type: "scatter",
+            mode: "lines",
+            name: `${name} (smooth)`,
+            legendgroup: group,
+            showlegend: false,
+            x: smoothX,
+            y: smooth.y,
+            yaxis: axisY,
+            line: { color, width: 2.4 },
+            hoverinfo: "skip", // hover shows raw points only
+          });
+          meta.push({ trialId: s.meta.id, kind: "smooth", color });
+        }
 
         // Dashed vertical line at session start (clock mode, once per trial).
         if (mode === "calendar" && startIso && mi === 0) {
@@ -210,7 +300,7 @@ export function SensorPlot({
       });
 
       // ---- Time bookmarks (hoverable markers + light vertical lines) ------
-      const bookmarks = s.meta.bookmarks ?? [];
+      const bookmarks = showBookmarks ? (s.meta.bookmarks ?? []) : [];
       if (bookmarks.length > 0) {
         const bx: (string | number)[] = [];
         const texts: string[] = [];
@@ -236,10 +326,6 @@ export function SensorPlot({
         }
 
         if (bx.length > 0) {
-          // Diamond markers on the top panel so hover works with unified x hover.
-          // y= mid of first metric range is unknown without scanning — use
-          // "markers" with y from first metric midpoint approx: use NaN-safe
-          // approach — place at the mean of the first metric for visibility.
           const firstYs = s.points.map((p) => metricValue(p, metrics[0]));
           const midY =
             firstYs.length > 0
@@ -264,9 +350,36 @@ export function SensorPlot({
             text: texts,
             hovertemplate: `%{text}<extra>${name}</extra>`,
           });
+          meta.push({ trialId: s.meta.id, kind: "bookmark", color });
         }
       }
     });
+
+    // Hovered bookmark drawn last so it floats above overlapping diamonds.
+    if (hoverBm && showBookmarks) {
+      traces.push({
+        type: "scatter",
+        mode: "markers",
+        name: "bookmark highlight",
+        showlegend: false,
+        x: [hoverBm.x],
+        y: [hoverBm.y],
+        yaxis: "y",
+        marker: {
+          symbol: "diamond",
+          size: 18,
+          color: hoverBm.color,
+          line: { width: 2.5, color: "#ffffff" },
+        },
+        text: [hoverBm.text],
+        hovertemplate: `%{text}<extra></extra>`,
+      });
+      meta.push({
+        trialId: "",
+        kind: "highlight",
+        color: hoverBm.color,
+      });
+    }
 
     // Aligned mode: dotted line at x=0 (session start for every trial).
     if (mode === "aligned") {
@@ -376,8 +489,71 @@ export function SensorPlot({
       height,
     };
 
-    return { data: traces, layout: layoutObj };
-  }, [series, mode, metrics, colors, height]);
+    return { data: traces, layout: layoutObj, meta };
+  }, [
+    series,
+    mode,
+    metrics,
+    colors,
+    height,
+    showSmooth,
+    showBookmarks,
+    hoverBm,
+  ]);
+
+  curveMetaRef.current = meta;
+
+  const handleHover = (e: Readonly<PlotMouseEvent>) => {
+    const points = e.points ?? [];
+    const bmPt = points.find(
+      (p) => curveMetaRef.current[p.curveNumber]?.kind === "bookmark",
+    );
+    if (!bmPt) {
+      setHoverBm(null);
+      return;
+    }
+    const m = curveMetaRef.current[bmPt.curveNumber]!;
+    const text =
+      typeof bmPt.text === "string"
+        ? bmPt.text
+        : Array.isArray(bmPt.text)
+          ? String(bmPt.text[0] ?? "")
+          : "";
+    setHoverBm({
+      x: bmPt.x as string | number,
+      y: typeof bmPt.y === "number" ? bmPt.y : Number(bmPt.y),
+      color: m.color,
+      text,
+    });
+  };
+
+  const handleUnhover = () => {
+    setHoverBm(null);
+  };
+
+  const handleClick = (e: Readonly<PlotMouseEvent>) => {
+    if (!onTimePick) return;
+    const points = e.points ?? [];
+    if (!points.length) return;
+
+    // Prefer bookmark → raw curve so the selected trial matches what you clicked.
+    const pt =
+      points.find(
+        (p) => curveMetaRef.current[p.curveNumber]?.kind === "bookmark",
+      ) ??
+      points.find(
+        (p) => curveMetaRef.current[p.curveNumber]?.kind === "raw",
+      ) ??
+      points[0];
+
+    const m = curveMetaRef.current[pt.curveNumber];
+    if (!m || m.kind === "highlight" || !m.trialId) return;
+
+    const startIso = sessionByTrial.get(m.trialId) ?? null;
+    const time = xToClockTime(pt.x as string | number | Date, mode, startIso);
+    if (!time) return;
+    onTimePick({ trialId: m.trialId, time });
+  };
 
   if (series.length === 0) {
     return (
@@ -398,7 +574,7 @@ export function SensorPlot({
   return (
     <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
       <PlotComponent
-        key={`plot-${plotRevision}-${mode}-${metrics.join("-")}-${series.map((s) => s.meta.id).join(",")}`}
+        key={`plot-${plotRevision}-${mode}-${metrics.join("-")}-${showSmooth}-${showBookmarks}-${series.map((s) => s.meta.id).join(",")}`}
         data={data}
         layout={layout}
         config={{
@@ -413,6 +589,9 @@ export function SensorPlot({
         }}
         style={{ width: "100%", height }}
         useResizeHandler
+        onClick={handleClick}
+        onHover={handleHover}
+        onUnhover={handleUnhover}
       />
     </div>
   );
