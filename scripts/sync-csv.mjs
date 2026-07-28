@@ -75,6 +75,7 @@ async function syncLocalOnly() {
         sessionStartTime: null,
         dateLabel: extractDateLabel(file),
         storagePath: `local:${file}`,
+        bookmarks: [],
         uploadedAt: now,
         updatedAt: now,
       });
@@ -131,6 +132,7 @@ async function syncSupabase() {
       session_start_time: null,
       date_label: extractDateLabel(file),
       storage_path: storagePath,
+      bookmarks: [],
       uploaded_at: now,
       updated_at: now,
     };

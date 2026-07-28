@@ -1,6 +1,7 @@
 "use client";
 
 import { useState } from "react";
+import { TrialBookmarksEditor } from "@/components/dashboard/TrialBookmarksEditor";
 import type { TrialMeta } from "@/types/trial";
 
 type Props = {
@@ -111,6 +112,8 @@ export function TrialMetadataForm({ trial, onSaved, onDeleted }: Props) {
         </button>
         {status ? <span className="text-xs text-[#b5b5b8]">{status}</span> : null}
       </div>
+
+      <TrialBookmarksEditor trial={trial} onSaved={onSaved} />
     </div>
   );
 }

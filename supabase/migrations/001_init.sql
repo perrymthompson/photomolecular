@@ -11,6 +11,7 @@ create table if not exists public.trials (
   session_start_time text, -- HH:MM:SS on the trial's data date
   date_label text,
   storage_path text not null unique,
+  bookmarks jsonb not null default '[]'::jsonb,
   uploaded_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
@@ -40,3 +41,16 @@ create policy "Public update trials"
 create policy "Public delete trials"
   on public.trials for delete
   using (true);
+
+-- Storage RLS (required for Dashboard/API uploads without service_role)
+create policy "Allow read chamber csvs"
+  on storage.objects for select
+  using (bucket_id = 'chamber-csvs');
+
+create policy "Allow insert chamber csvs"
+  on storage.objects for insert
+  with check (bucket_id = 'chamber-csvs');
+
+create policy "Allow delete chamber csvs"
+  on storage.objects for delete
+  using (bucket_id = 'chamber-csvs');

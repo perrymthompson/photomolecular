@@ -1,5 +1,18 @@
 /** Trial / chamber CSV metadata and parsed sensor series. */
 
+/**
+ * Time-stamped note on a trial (e.g. "06:00 — turned UV on").
+ * `time` is clock time HH:MM or HH:MM:SS on the trial's data date —
+ * same convention as sessionStartTime.
+ */
+export type TrialBookmark = {
+  id: string;
+  /** Clock time on the trial day: "HH:MM" or "HH:MM:SS" (24h). */
+  time: string;
+  /** Free-text note shown on hover over the plot marker. */
+  note: string;
+};
+
 export type TrialMeta = {
   id: string;
   /** Display label, usually filename prefix before first underscore (e.g. "ch1"). */
@@ -16,6 +29,8 @@ export type TrialMeta = {
   dateLabel: string | null;
   /** Storage path or local relative path to the CSV. */
   storagePath: string;
+  /** Time-stamped event notes (bookmarks) shown as markers on the plot. */
+  bookmarks: TrialBookmark[];
   uploadedAt: string;
   updatedAt: string;
 };

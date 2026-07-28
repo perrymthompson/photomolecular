@@ -1,3 +1,35 @@
+/**
+ * =============================================================================
+ * parseChamberCsv — turn a chamber CSV into SensorPoint[]
+ * =============================================================================
+ *
+ * Expected CSV layout (same as the R script):
+ *   V1 = id
+ *   V2 = name
+ *   V3 = channel
+ *   V4 = measure type   ← contains "RH" for humidity rows; else treated as Temp
+ *   V5 = value          ← numeric RH (%) or Temp (°C)
+ *   V6 = timestamp      ← "YYYY-MM-DD HH:MM:SS" (treated as UTC, like R tz="UTC")
+ *
+ * Processing steps:
+ *   1. PapaParse the text (no header row naming — columns are positional).
+ *   2. Skip the first row (header / junk), matching R `skip = 1`.
+ *   3. Split rows into two maps keyed by normalized ISO timestamp:
+ *        rhByTime   — measure type matches /RH/i
+ *        tempByTime — everything else with a valid numeric value
+ *   4. For each timestamp that has BOTH rh and temp, emit a SensorPoint with:
+ *        absHumidity = absoluteHumidity(rh, temp)   // see humidity.ts
+ *   5. Sort points ascending by time.
+ *
+ * IMPORTANT: timestamps without a matching RH+Temp pair are dropped. If your
+ * plot looks short, check that RH and Temp share identical clock strings.
+ *
+ * sessionStartIso() combines the first sample's calendar date (YYYY-MM-DD)
+ * with a user-entered HH:MM[:SS] (session start or bookmark). Used for
+ * dashed session markers and aligned-mode x-axis zero.
+ * =============================================================================
+ */
+
 import Papa from "papaparse";
 import { absoluteHumidity } from "./humidity";
 import type { SensorPoint } from "@/types/trial";
@@ -34,12 +66,13 @@ export function parseChamberCsv(csvText: string): SensorPoint[] {
     quoteChar: '"',
   });
 
-  const rows = parsed.data.slice(1); // skip first row like R `skip = 1`
+  // R script: skip = 1
+  const rows = parsed.data.slice(1);
   const rhByTime = new Map<string, number>();
   const tempByTime = new Map<string, number>();
 
   for (const row of rows) {
-    // Papa without header yields arrays; normalize
+    // Papa without header yields arrays; normalize to column indices 3/4/5.
     const arr = row as unknown as string[];
     const measureType = (
       Array.isArray(arr) ? String(arr[3] ?? "") : cell(row, "measure_type", "V4")
@@ -54,13 +87,15 @@ export function parseChamberCsv(csvText: string): SensorPoint[] {
     const value = Number(valueStr);
     if (!timeStr || Number.isNaN(value)) continue;
 
-    // Normalize to ISO; treat logged clock as UTC (matches R tz="UTC")
+    // Normalize to ISO; treat logged clock as UTC (matches R tz="UTC").
+    // "2026-07-24 12:38:00" → "2026-07-24T12:38:00.000Z"
     const time = timeStr.includes("T")
       ? new Date(timeStr).toISOString()
       : new Date(timeStr.replace(" ", "T") + "Z").toISOString();
 
     if (Number.isNaN(Date.parse(time))) continue;
 
+    // RH vs Temp classification is purely by measure-type substring.
     if (/RH/i.test(measureType)) rhByTime.set(time, value);
     else tempByTime.set(time, value);
   }
@@ -68,11 +103,12 @@ export function parseChamberCsv(csvText: string): SensorPoint[] {
   const points: SensorPoint[] = [];
   for (const [time, rh] of rhByTime) {
     const temp = tempByTime.get(time);
-    if (temp === undefined) continue;
+    if (temp === undefined) continue; // need both sensors at same clock time
     points.push({
       time,
       rh,
       temp,
+      // Magnus–Tetens AH — see humidity.ts for the formula.
       absHumidity: absoluteHumidity(rh, temp),
     });
   }
@@ -81,13 +117,17 @@ export function parseChamberCsv(csvText: string): SensorPoint[] {
   return points;
 }
 
-/** Combine HH:MM[:SS] with the calendar date of the first sample. */
+/**
+ * Combine HH:MM[:SS] with the calendar date of the first sample.
+ * Example: firstSample="2026-07-24T10:00:00.000Z", timeOfDay="12:38:00"
+ *       → "2026-07-24T12:38:00.000Z"
+ */
 export function sessionStartIso(
   firstSampleIso: string | undefined,
   timeOfDay: string | null | undefined,
 ): string | null {
   if (!firstSampleIso || !timeOfDay?.trim()) return null;
-  const date = firstSampleIso.slice(0, 10);
+  const date = firstSampleIso.slice(0, 10); // YYYY-MM-DD
   const t = timeOfDay.trim();
   const full =
     t.length === 5 ? `${date}T${t}:00Z` : t.length === 8 ? `${date}T${t}Z` : null;

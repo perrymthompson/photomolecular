@@ -1,5 +1,37 @@
 "use client";
 
+/**
+ * =============================================================================
+ * SensorPlot — chamber sensor plotting (AH / RH / Temp)
+ * =============================================================================
+ *
+ * This is the main Plotly renderer. Data arrives already computed as
+ * TrialSeries[] from the API (`/api/trials/series` → parseChamberCsv).
+ *
+ * PIPELINE (where each value comes from):
+ *   1. CSV rows          → src/lib/parse-csv.ts   (RH + Temp joined by timestamp)
+ *   2. Absolute humidity → src/lib/humidity.ts    (Magnus–Tetens, g/m³)
+ *   3. This file         → draws raw + LOWESS-smoothed lines, session markers,
+ *                          and time bookmarks
+ *   4. Smoothing         → src/lib/lowess.ts      (span = 0.08, like R loess)
+ *
+ * METRICS:
+ *   - absHumidity  Absolute Humidity (g/m³)  — computed, not logged directly
+ *   - rh           Relative Humidity (%RH)   — from CSV measure type containing "RH"
+ *   - temp         Temperature (°C)          — non-RH rows in the CSV
+ *
+ * X-AXIS MODES:
+ *   - calendar ("Clock time"):  ISO timestamps; Plotly date axis, tick %H:%M
+ *   - aligned  ("Align…"):      minutes since sessionStartTime; requires that
+ *                               field on every trial; AH-only when parent
+ *                               forces metrics=["absHumidity"]
+ *
+ * BOOKMARKS:
+ *   Vertical markers at clock times (HH:MM[:SS] on the trial's data date).
+ *   Hover the diamond markers to read the note text.
+ * =============================================================================
+ */
+
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis, Shape } from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
@@ -12,21 +44,42 @@ import { METRIC_LABELS } from "@/types/trial";
 type Props = {
   series: TrialSeries[];
   mode: PlotMode;
+  /** Which y-panels to show. Combined view passes all three. */
   metrics?: MetricKey[];
   height?: number;
+  /** Bumped by parent to force Plotly remount after view/mode changes. */
   plotRevision?: number;
 };
 
+/** Pick the numeric y-value for a metric from one sample point. */
 function metricValue(p: TrialSeries["points"][0], key: MetricKey): number {
   if (key === "absHumidity") return p.absHumidity;
   if (key === "rh") return p.rh;
   return p.temp;
 }
 
+/** Legend / hover label: channel · filename (unique when multiple ch1s exist). */
 function legendName(s: TrialSeries): string {
   const dup = s.meta.label;
   const short = s.meta.filename.replace(/\.csv$/i, "");
   return `${dup} · ${short}`;
+}
+
+/**
+ * Resolve a bookmark clock time onto the plot x-axis.
+ * Calendar mode → ISO timestamp; aligned mode → minutes since session start.
+ */
+function bookmarkX(
+  firstSampleIso: string | undefined,
+  bookmarkTime: string,
+  mode: PlotMode,
+  sessionStart: string | null,
+): string | number | null {
+  const iso = sessionStartIso(firstSampleIso, bookmarkTime);
+  if (!iso) return null;
+  if (mode === "calendar") return iso;
+  if (!sessionStart) return null;
+  return (Date.parse(iso) - Date.parse(sessionStart)) / 60000;
 }
 
 export function SensorPlot({
@@ -36,6 +89,7 @@ export function SensorPlot({
   height = 720,
   plotRevision = 0,
 }: Props) {
+  // Lazy-load Plotly only when we have data (keeps initial bundle smaller).
   const [PlotComponent, setPlotComponent] = useState<ComponentType<{
     data: Data[];
     layout: Partial<Layout>;
@@ -60,6 +114,7 @@ export function SensorPlot({
     };
   }, [series.length]);
 
+  // One distinct color per trial id (not per "ch1" label — labels can collide).
   const colors = useMemo(
     () => trialColorMapById(series.map((s) => ({ id: s.meta.id, label: s.meta.label }))),
     [series],
@@ -74,23 +129,29 @@ export function SensorPlot({
       const color = colors[s.meta.id] ?? "#888";
       const group = s.meta.id;
       const name = legendName(s);
+
+      // Session start = first sample's calendar date + meta.sessionStartTime.
       const startIso = sessionStartIso(
         s.points[0]?.time,
         s.meta.sessionStartTime,
       );
 
+      // ---- Sensor metric traces (raw faint + LOWESS thick) ----------------
       metrics.forEach((metric, mi) => {
+        // Stacked panels: first metric uses "y", then "y2", "y3", …
         const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
         const xsCal = s.points.map((p) => p.time);
         const ys = s.points.map((p) => metricValue(p, metric));
 
+        // X values: ISO strings (clock) OR minutes since session start (aligned).
         let xs: (string | number)[] = xsCal;
         if (mode === "aligned") {
-          if (!startIso) return;
+          if (!startIso) return; // cannot align without session start
           const t0 = Date.parse(startIso);
           xs = s.points.map((p) => (Date.parse(p.time) - t0) / 60000);
         }
 
+        // Raw data — thin, semi-transparent (matches R aesthetic).
         traces.push({
           type: "scatter",
           mode: "lines",
@@ -108,6 +169,8 @@ export function SensorPlot({
               : `%{x|%H:%M:%S}<br>${METRIC_LABELS[metric]}: %{y:.3f}<extra>${name}</extra>`,
         });
 
+        // LOWESS smooth — span 0.08 of points (same idea as R loess span).
+        // lowess() needs numeric x; for calendar mode we pass epoch ms.
         const xNum =
           mode === "aligned"
             ? (xs as number[])
@@ -128,9 +191,10 @@ export function SensorPlot({
           y: smooth.y,
           yaxis: axisY,
           line: { color, width: 2.4 },
-          hoverinfo: "skip",
+          hoverinfo: "skip", // hover shows raw points only
         });
 
+        // Dashed vertical line at session start (clock mode, once per trial).
         if (mode === "calendar" && startIso && mi === 0) {
           shapes.push({
             type: "line",
@@ -144,8 +208,67 @@ export function SensorPlot({
           });
         }
       });
+
+      // ---- Time bookmarks (hoverable markers + light vertical lines) ------
+      const bookmarks = s.meta.bookmarks ?? [];
+      if (bookmarks.length > 0) {
+        const bx: (string | number)[] = [];
+        const texts: string[] = [];
+
+        for (const b of bookmarks) {
+          const x = bookmarkX(s.points[0]?.time, b.time, mode, startIso);
+          if (x === null) continue;
+          bx.push(x);
+          texts.push(`${b.time} — ${b.note}`);
+
+          // Soft vertical guide at the bookmark time.
+          shapes.push({
+            type: "line",
+            xref: "x",
+            yref: "paper",
+            x0: x,
+            x1: x,
+            y0: 0,
+            y1: 1,
+            line: { color, width: 1, dash: "dot" },
+            opacity: 0.55,
+          });
+        }
+
+        if (bx.length > 0) {
+          // Diamond markers on the top panel so hover works with unified x hover.
+          // y= mid of first metric range is unknown without scanning — use
+          // "markers" with y from first metric midpoint approx: use NaN-safe
+          // approach — place at the mean of the first metric for visibility.
+          const firstYs = s.points.map((p) => metricValue(p, metrics[0]));
+          const midY =
+            firstYs.length > 0
+              ? firstYs.reduce((a, v) => a + v, 0) / firstYs.length
+              : 0;
+
+          traces.push({
+            type: "scatter",
+            mode: "markers",
+            name: `${name} bookmarks`,
+            legendgroup: group,
+            showlegend: false,
+            x: bx,
+            y: bx.map(() => midY),
+            yaxis: "y",
+            marker: {
+              symbol: "diamond",
+              size: 11,
+              color,
+              line: { width: 1, color: "#ffffff" },
+            },
+            text: texts,
+            hovertemplate: `%{text}<extra>${name}</extra>`,
+          });
+        }
+      }
     });
 
+    // Aligned mode: dotted line at x=0 (session start for every trial).
     if (mode === "aligned") {
       shapes.push({
         type: "line",
@@ -159,6 +282,7 @@ export function SensorPlot({
       });
     }
 
+    // Stacked y-axis domains (Combined view = 3 panels with small gaps).
     const domainH = 1 / n;
     const gap = 0.06;
     const yAxes: Record<string, Partial<LayoutAxis>> = {};
@@ -179,6 +303,7 @@ export function SensorPlot({
       };
     });
 
+    // Trial-level notes (not bookmarks) shown as a subtitle annotation.
     const notes = series
       .filter((s) => s.meta.notes?.trim())
       .map((s) => `${legendName(s)}: ${s.meta.notes.trim()}`)

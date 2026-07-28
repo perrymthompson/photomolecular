@@ -2,6 +2,7 @@
 
 import dynamic from "next/dynamic";
 import { useCallback, useEffect, useMemo, useState } from "react";
+import { PlotBookmarkAdd } from "@/components/charts/PlotBookmarkAdd";
 import { TrialSelector } from "@/components/charts/TrialSelector";
 import { selectionSpansMultipleRuns, sortTrials } from "@/lib/trial-sort";
 import type { MetricKey, PlotMode, TrialMeta, TrialSeries } from "@/types/trial";
@@ -231,6 +232,23 @@ export function PlotWorkspace() {
             </div>
           )}
         </div>
+
+        {visibleSeries.length > 0 ? (
+          <PlotBookmarkAdd
+            series={visibleSeries}
+            onSaved={(updated) => {
+              setTrials((prev) =>
+                sortTrials(prev.map((t) => (t.id === updated.id ? updated : t))),
+              );
+              setSeries((prev) =>
+                prev.map((s) =>
+                  s.meta.id === updated.id ? { ...s, meta: updated } : s,
+                ),
+              );
+              setPlotRevision((n) => n + 1);
+            }}
+          />
+        ) : null}
       </section>
     </div>
   );

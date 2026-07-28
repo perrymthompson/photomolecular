@@ -59,6 +59,14 @@ In Supabase: **Storage**
 
 Confirm bucket **`chamber-csvs`** exists. If not, re-run the SQL migration.
 
+## Step 5b — Fix upload RLS errors (if needed)
+
+If Dashboard upload fails with **"new row violates row-level security policy"**:
+
+1. Confirm `SUPABASE_SERVICE_ROLE_KEY` is set in Vercel (not just the anon key)
+2. Redeploy after adding it
+3. Also run `supabase/migrations/002_storage_policies.sql` in the Supabase SQL Editor
+
 ## Step 6 — Test on your live site
 
 1. Open `/dashboard` on your Vercel URL
@@ -82,7 +90,7 @@ After redeploying, visit:
 https://YOUR-SITE.vercel.app/api/health
 ```
 
-You want: `{"supabase":true,"vercel":true}`
+You want: `{"supabase":true,"serviceRole":true,"vercel":true}`
 
 ## Troubleshooting
 
@@ -93,4 +101,4 @@ You want: `{"supabase":true,"vercel":true}`
 → Bucket `chamber-csvs` missing — re-run `001_init.sql`.
 
 ### Upload fails with RLS / permission error
-→ Re-run `001_init.sql` (policies section).
+→ Run `supabase/migrations/002_storage_policies.sql` in the Supabase SQL Editor, and confirm `SUPABASE_SERVICE_ROLE_KEY` is set in Vercel (then redeploy). Check `/api/health` shows `"serviceRole":true`.

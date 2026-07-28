@@ -10,6 +10,10 @@ export function isSupabaseConfigured(): boolean {
   );
 }
 
+export function hasServiceRoleKey(): boolean {
+  return Boolean(process.env.SUPABASE_SERVICE_ROLE_KEY);
+}
+
 /** Server-side client: prefers service role for uploads / metadata writes. */
 export function getSupabaseAdmin(): SupabaseClient | null {
   if (!isSupabaseConfigured()) return null;
@@ -22,6 +26,15 @@ export function getSupabaseAdmin(): SupabaseClient | null {
     auth: { persistSession: false, autoRefreshToken: false },
   });
   return client;
+}
+
+/** For uploads/deletes — requires service role or storage RLS policies. */
+export function requireSupabaseAdmin(): SupabaseClient {
+  const sb = getSupabaseAdmin();
+  if (!sb) {
+    throw new Error("Supabase is not configured.");
+  }
+  return sb;
 }
 
 export const BUCKET = "chamber-csvs";

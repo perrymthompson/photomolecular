@@ -1,5 +1,8 @@
 import { NextResponse } from "next/server";
-import { isSupabaseConfigured } from "@/lib/supabase/client";
+import {
+  hasServiceRoleKey,
+  isSupabaseConfigured,
+} from "@/lib/supabase/client";
 
 export const runtime = "nodejs";
 
@@ -7,6 +10,7 @@ export const runtime = "nodejs";
 export async function GET() {
   return NextResponse.json({
     supabase: isSupabaseConfigured(),
+    serviceRole: hasServiceRoleKey(),
     vercel: Boolean(process.env.VERCEL),
   });
 }

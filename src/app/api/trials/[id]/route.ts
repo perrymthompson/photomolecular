@@ -12,8 +12,26 @@ export async function PATCH(req: Request, ctx: Ctx) {
       notes?: string;
       sessionStartTime?: string | null;
       label?: string;
+      bookmarks?: { id?: string; time: string; note: string }[];
     };
-    const updated = await updateTrial(id, body);
+    const patch: {
+      notes?: string;
+      sessionStartTime?: string | null;
+      label?: string;
+      bookmarks?: { id: string; time: string; note: string }[];
+    } = {
+      notes: body.notes,
+      sessionStartTime: body.sessionStartTime,
+      label: body.label,
+    };
+    if (body.bookmarks !== undefined) {
+      patch.bookmarks = body.bookmarks.map((b) => ({
+        id: b.id?.trim() || crypto.randomUUID(),
+        time: b.time,
+        note: b.note,
+      }));
+    }
+    const updated = await updateTrial(id, patch);
     if (!updated) {
       return NextResponse.json({ error: "Not found" }, { status: 404 });
     }

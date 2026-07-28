@@ -3,7 +3,7 @@ import path from "path";
 import { extractDateLabel, labelFromFilename } from "@/lib/humidity";
 import { parseChamberCsv } from "@/lib/parse-csv";
 import { BUCKET, getSupabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/client";
-import type { TrialMeta, TrialSeries } from "@/types/trial";
+import type { TrialBookmark, TrialMeta, TrialSeries } from "@/types/trial";
 
 const DATA_DIR = path.join(process.cwd(), "data");
 const CSV_DIR = path.join(DATA_DIR, "csv");
@@ -47,6 +47,42 @@ function requireWritableLocalData(feature: string) {
   }
 }
 
+function normalizeBookmarks(raw: unknown): TrialBookmark[] {
+  if (!Array.isArray(raw)) return [];
+  return raw
+    .map((b) => {
+      if (!b || typeof b !== "object") return null;
+      const row = b as Record<string, unknown>;
+      const time = typeof row.time === "string" ? row.time.trim() : "";
+      const note = typeof row.note === "string" ? row.note.trim() : "";
+      if (!time || !note) return null;
+      return {
+        id:
+          typeof row.id === "string" && row.id
+            ? row.id
+            : crypto.randomUUID(),
+        time,
+        note,
+      };
+    })
+    .filter((b): b is TrialBookmark => b !== null);
+}
+
+function rowToMeta(row: Record<string, unknown>): TrialMeta {
+  return {
+    id: row.id as string,
+    label: row.label as string,
+    filename: row.filename as string,
+    notes: (row.notes as string) ?? "",
+    sessionStartTime: (row.session_start_time as string) ?? null,
+    dateLabel: (row.date_label as string) ?? null,
+    storagePath: row.storage_path as string,
+    bookmarks: normalizeBookmarks(row.bookmarks),
+    uploadedAt: row.uploaded_at as string,
+    updatedAt: row.updated_at as string,
+  };
+}
+
 function newMeta(filename: string, storagePath: string): TrialMeta {
   const now = new Date().toISOString();
   return {
@@ -57,6 +93,7 @@ function newMeta(filename: string, storagePath: string): TrialMeta {
     sessionStartTime: null,
     dateLabel: extractDateLabel(filename),
     storagePath,
+    bookmarks: [],
     uploadedAt: now,
     updatedAt: now,
   };
@@ -94,7 +131,10 @@ export async function syncLocalInventory(): Promise<TrialMeta[]> {
   }
 
   if (changed && canWriteLocalData()) await writeLocalMeta(meta);
-  return meta.trials;
+  return meta.trials.map((t) => ({
+    ...t,
+    bookmarks: normalizeBookmarks(t.bookmarks),
+  }));
 }
 
 async function listSupabaseTrials(): Promise<TrialMeta[]> {
@@ -106,17 +146,7 @@ async function listSupabaseTrials(): Promise<TrialMeta[]> {
     .order("uploaded_at", { ascending: false });
   if (error) throw new Error(error.message);
 
-  return (data ?? []).map((row) => ({
-    id: row.id as string,
-    label: row.label as string,
-    filename: row.filename as string,
-    notes: (row.notes as string) ?? "",
-    sessionStartTime: (row.session_start_time as string) ?? null,
-    dateLabel: (row.date_label as string) ?? null,
-    storagePath: row.storage_path as string,
-    uploadedAt: row.uploaded_at as string,
-    updatedAt: row.updated_at as string,
-  }));
+  return (data ?? []).map((row) => rowToMeta(row as Record<string, unknown>));
 }
 
 export async function listTrials(): Promise<TrialMeta[]> {
@@ -134,43 +164,47 @@ export async function listTrials(): Promise<TrialMeta[]> {
 
 export async function updateTrial(
   id: string,
-  patch: Partial<Pick<TrialMeta, "notes" | "sessionStartTime" | "label">>,
+  patch: Partial<
+    Pick<TrialMeta, "notes" | "sessionStartTime" | "label" | "bookmarks">
+  >,
 ): Promise<TrialMeta | null> {
   if (isSupabaseConfigured()) {
     const sb = getSupabaseAdmin()!;
+    const payload: Record<string, unknown> = {
+      updated_at: new Date().toISOString(),
+    };
+    if (patch.notes !== undefined) payload.notes = patch.notes;
+    if (patch.sessionStartTime !== undefined) {
+      payload.session_start_time = patch.sessionStartTime;
+    }
+    if (patch.label !== undefined) payload.label = patch.label;
+    if (patch.bookmarks !== undefined) {
+      payload.bookmarks = normalizeBookmarks(patch.bookmarks);
+    }
+
     const { data, error } = await sb
       .from("trials")
-      .update({
-        notes: patch.notes,
-        session_start_time: patch.sessionStartTime,
-        label: patch.label,
-        updated_at: new Date().toISOString(),
-      })
+      .update(payload)
       .eq("id", id)
       .select("*")
       .maybeSingle();
     if (error) throw new Error(error.message);
     if (!data) return null;
-    return {
-      id: data.id,
-      label: data.label,
-      filename: data.filename,
-      notes: data.notes ?? "",
-      sessionStartTime: data.session_start_time,
-      dateLabel: data.date_label,
-      storagePath: data.storage_path,
-      uploadedAt: data.uploaded_at,
-      updatedAt: data.updated_at,
-    };
+    return rowToMeta(data as Record<string, unknown>);
   }
 
   requireWritableLocalData("Editing local trial metadata");
   const meta = await readLocalMeta();
   const idx = meta.trials.findIndex((t) => t.id === id);
   if (idx < 0) return null;
+  const nextPatch = { ...patch };
+  if (nextPatch.bookmarks !== undefined) {
+    nextPatch.bookmarks = normalizeBookmarks(nextPatch.bookmarks);
+  }
   meta.trials[idx] = {
     ...meta.trials[idx],
-    ...patch,
+    bookmarks: meta.trials[idx].bookmarks ?? [],
+    ...nextPatch,
     updatedAt: new Date().toISOString(),
   };
   await writeLocalMeta(meta);
@@ -254,7 +288,18 @@ export async function saveUploadedCsv(
     const { error: upErr } = await sb.storage
       .from(BUCKET)
       .upload(storagePath, body, { contentType: "text/csv", upsert: false });
-    if (upErr) throw new Error(upErr.message);
+    if (upErr) {
+      const msg = upErr.message;
+      if (
+        msg.includes("row-level security") &&
+        !process.env.SUPABASE_SERVICE_ROLE_KEY
+      ) {
+        throw new Error(
+          `${msg}. Add SUPABASE_SERVICE_ROLE_KEY in Vercel and redeploy, or run supabase/migrations/002_storage_policies.sql in the Supabase SQL Editor.`,
+        );
+      }
+      throw new Error(msg);
+    }
 
     const trial = newMeta(safeName, storagePath);
     const { data, error } = await sb
@@ -267,23 +312,14 @@ export async function saveUploadedCsv(
         session_start_time: trial.sessionStartTime,
         date_label: trial.dateLabel,
         storage_path: trial.storagePath,
+        bookmarks: trial.bookmarks,
         uploaded_at: trial.uploadedAt,
         updated_at: trial.updatedAt,
       })
       .select("*")
       .single();
     if (error) throw new Error(error.message);
-    return {
-      id: data.id,
-      label: data.label,
-      filename: data.filename,
-      notes: data.notes ?? "",
-      sessionStartTime: data.session_start_time,
-      dateLabel: data.date_label,
-      storagePath: data.storage_path,
-      uploadedAt: data.uploaded_at,
-      updatedAt: data.updated_at,
-    };
+    return rowToMeta(data as Record<string, unknown>);
   }
 
   requireWritableLocalData("Uploading CSVs without Supabase");
