@@ -91,6 +91,12 @@ type CurveMeta = {
 const BOOKMARK_SIZE = 13;
 const END_LINE_COLOR = "#8a8a8d";
 const END_LINE_HOVER_STEPS = 28;
+const FULL_RES_GAP_MS = 10_000;
+const METRIC_SHORT: Record<MetricKey, { short: string; unit: string }> = {
+  absHumidity: { short: "AH", unit: "g/m³" },
+  rh: { short: "RH", unit: "%RH" },
+  temp: { short: "Temp", unit: "°C" },
+};
 
 /** Stable fingerprint of sensor points (ignores bookmark/notes edits). */
 function pointsFingerprint(series: TrialSeries[]): string {
@@ -121,6 +127,93 @@ function metricValue(p: TrialSeries["points"][0], key: MetricKey): number {
   if (key === "absHumidity") return p.absHumidity;
   if (key === "rh") return p.rh;
   return p.temp;
+}
+
+function splitContinuousPointRuns(
+  points: TrialSeries["points"],
+  maxGapMs: number,
+): TrialSeries["points"][] {
+  if (points.length === 0) return [];
+
+  const runs: TrialSeries["points"][] = [];
+  let start = 0;
+  for (let i = 1; i < points.length; i++) {
+    const prevMs = Date.parse(points[i - 1].time);
+    const nextMs = Date.parse(points[i].time);
+    if (
+      Number.isFinite(prevMs) &&
+      Number.isFinite(nextMs) &&
+      nextMs - prevMs > maxGapMs
+    ) {
+      runs.push(points.slice(start, i));
+      start = i;
+    }
+  }
+  runs.push(points.slice(start));
+  return runs;
+}
+
+function buildRawTraceSeries(
+  points: TrialSeries["points"],
+  metric: MetricKey,
+  mode: PlotMode,
+  startIso: string | null,
+  color: string,
+  label: string,
+  bookmarks: TrialBookmark[],
+  breakOnGaps: boolean,
+): {
+  x: (string | number)[];
+  y: Array<number | null>;
+  text: string[];
+  customdata: string[];
+} {
+  const runs = breakOnGaps
+    ? splitContinuousPointRuns(points, FULL_RES_GAP_MS)
+    : [points];
+  const x: (string | number)[] = [];
+  const y: Array<number | null> = [];
+  const text: string[] = [];
+  const customdata: string[] = [];
+
+  runs.forEach((run, runIdx) => {
+    if (runIdx > 0) {
+      x.push(mode === "aligned" ? Number.NaN : run[0].time);
+      y.push(null);
+      text.push("");
+      customdata.push("");
+    }
+
+    for (const p of run) {
+      const xValue =
+        mode === "aligned"
+          ? startIso
+            ? (Date.parse(p.time) - Date.parse(startIso)) / 60000
+            : null
+          : p.time;
+      if (
+        xValue === null ||
+        (typeof xValue === "number" && !Number.isFinite(xValue))
+      ) {
+        continue;
+      }
+
+      const nearby = nearbyBookmarkForSample(points[0]?.time, bookmarks, p.time);
+      const yValue = metricValue(p, metric);
+      x.push(xValue);
+      y.push(yValue);
+      customdata.push(formatClockUtc(new Date(p.time)));
+      text.push(
+        [
+          `<span style="color:${color}">●</span> ${label}`,
+          `${METRIC_SHORT[metric].short} ${yValue.toFixed(3)} ${METRIC_SHORT[metric].unit}`,
+          ...(nearby ? [`${nearby.time} - ${nearby.note}`] : []),
+        ].join("<br>"),
+      );
+    }
+  });
+
+  return { x, y, text, customdata };
 }
 
 /** Legend / hover label: channel · filename (unique when multiple ch1s exist). */
@@ -372,12 +465,6 @@ export function SensorPlot({
   const bookmarksKey = useMemo(() => bookmarksFingerprint(series), [series]);
   const notesKey = useMemo(() => notesFingerprint(series), [series]);
 
-  const metricShort: Record<MetricKey, { short: string; unit: string }> = {
-    absHumidity: { short: "AH", unit: "g/m³" },
-    rh: { short: "RH", unit: "%RH" },
-    temp: { short: "Temp", unit: "°C" },
-  };
-
   useEffect(() => {
     let cancelled = false;
     if (series.length === 0) {
@@ -448,33 +535,26 @@ export function SensorPlot({
         PLOT_MAX_POINTS,
       );
       const pts = keep.map((i) => s.points[i]);
+      const fullResRuns = fullResolution
+        ? splitContinuousPointRuns(pts, FULL_RES_GAP_MS)
+        : [pts];
 
       metrics.forEach((metric, mi) => {
         const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
-        const xsCal = pts.map((p) => p.time);
         const ys = pts.map((p) => metricValue(p, metric));
         metricValues[mi].push(...ys);
+        if (mode === "aligned" && !startIso) return;
 
-        let xs: (string | number)[] = xsCal;
-        if (mode === "aligned") {
-          if (!startIso) return;
-          const t0 = Date.parse(startIso);
-          xs = pts.map((p) => (Date.parse(p.time) - t0) / 60000);
-        }
-
-        const clockLabels = pts.map((p) => formatClockUtc(new Date(p.time)));
-        const hoverTexts = pts.map((p, i) => {
-          const nearby = nearbyBookmarkForSample(
-            s.points[0]?.time,
-            s.meta.bookmarks ?? [],
-            p.time,
-          );
-          return [
-            `<span style="color:${color}">●</span> ${s.meta.label}`,
-            `${metricShort[metric].short} ${ys[i].toFixed(3)} ${metricShort[metric].unit}`,
-            ...(nearby ? [`${nearby.time} - ${nearby.note}`] : []),
-          ].join("<br>");
-        });
+        const rawTrace = buildRawTraceSeries(
+          pts,
+          metric,
+          mode,
+          startIso,
+          color,
+          s.meta.label,
+          s.meta.bookmarks ?? [],
+          fullResolution,
+        );
 
         traces.push({
           type: "scatter",
@@ -482,13 +562,14 @@ export function SensorPlot({
           name,
           legendgroup: group,
           showlegend: mi === 0,
-          x: xs,
-          y: ys,
-          customdata: clockLabels,
-          text: hoverTexts,
+          x: rawTrace.x,
+          y: rawTrace.y,
+          customdata: rawTrace.customdata,
+          text: rawTrace.text,
           yaxis: axisY,
           line: { color, width: showSmooth ? 1 : 2 },
           opacity: showSmooth ? 0.35 : 0.9,
+          connectgaps: false,
           hovertemplate: "%{text}<extra></extra>",
         });
         meta.push({
@@ -499,32 +580,37 @@ export function SensorPlot({
         });
 
         if (showSmooth) {
-          const xNum =
-            mode === "aligned"
-              ? (xs as number[])
-              : xsCal.map((t) => Date.parse(t));
-          const cacheKey = `${s.meta.id}|${metric}|${mode}|${xNum.length}|${xNum[0]}|${xNum[xNum.length - 1]}`;
-          let smooth = lowessCacheRef.current.get(cacheKey);
-          if (!smooth) {
-            smooth = lowess(xNum, ys, LOWESS_SPAN);
-            lowessCacheRef.current.set(cacheKey, smooth);
-          }
-          const smoothX =
-            mode === "aligned"
-              ? smooth.x
-              : smooth.x.map((t) => new Date(t).toISOString());
+          fullResRuns.forEach((run, runIdx) => {
+            if (run.length < 2) return;
 
-          traces.push({
-            type: "scatter",
-            mode: "lines",
-            name: `${name} (smooth)`,
-            legendgroup: group,
-            showlegend: false,
-            x: smoothX,
-            y: smooth.y,
-            yaxis: axisY,
-            line: { color, width: 2.4 },
-            hoverinfo: "skip",
+            const runYs = run.map((p) => metricValue(p, metric));
+            const xNum =
+              mode === "aligned"
+                ? run.map((p) => (Date.parse(p.time) - Date.parse(startIso!)) / 60000)
+                : run.map((p) => Date.parse(p.time));
+            const cacheKey = `${s.meta.id}|${metric}|${mode}|${runIdx}|${xNum.length}|${xNum[0]}|${xNum[xNum.length - 1]}`;
+            let smooth = lowessCacheRef.current.get(cacheKey);
+            if (!smooth) {
+              smooth = lowess(xNum, runYs, LOWESS_SPAN);
+              lowessCacheRef.current.set(cacheKey, smooth);
+            }
+            const smoothX =
+              mode === "aligned"
+                ? smooth.x
+                : smooth.x.map((t) => new Date(t).toISOString());
+
+            traces.push({
+              type: "scatter",
+              mode: "lines",
+              name: `${name} (smooth)`,
+              legendgroup: group,
+              showlegend: false,
+              x: smoothX,
+              y: smooth.y,
+              yaxis: axisY,
+              line: { color, width: 2.4 },
+              hoverinfo: "skip",
+            });
           });
           meta.push({ trialId: s.meta.id, kind: "smooth", color, metric });
         }
@@ -592,37 +678,40 @@ export function SensorPlot({
     const shapes: Partial<Shape>[] = [];
     if (!showBookmarks) return { traces, meta, shapes };
 
-    current.forEach((s) => {
-      const color = colors[s.meta.id] ?? "#888";
-      const name = legendName(s);
+    // Shared auto end lines: one hover + one shape per run (not per ch1/ch2/amb X trial).
+    const sharedEnds = new Map<
+      string,
+      { bookmark: TrialBookmark; x: string | number }
+    >();
+    for (const s of current) {
       const startIso = sessionStartIso(
         s.points[0]?.time,
         s.meta.sessionStartTime,
       );
-      const bookmarks = plotBookmarksForSeries(s);
-      if (!bookmarks.length) return;
-
-      const bx: (string | number)[] = [];
-      const by: number[] = [];
-      const texts: string[] = [];
-
-      for (const b of bookmarks) {
+      for (const b of plotBookmarksForSeries(s)) {
+        if (!isComputedEndBookmark(b)) continue;
         const x = bookmarkPlotX(b, s.points[0]?.time, mode, startIso);
-        if (x === null) continue;
+        if (x === null || sharedEnds.has(b.id)) continue;
+        sharedEnds.set(b.id, { bookmark: b, x });
+      }
+    }
 
-        if (isComputedEndBookmark(b)) {
-          const vals = s.points.map((p) => metricValue(p, metrics[0]));
-          if (!vals.length) continue;
-          let yLo = vals[0];
-          let yHi = vals[0];
-          for (const v of vals) {
-            if (v < yLo) yLo = v;
-            if (v > yHi) yHi = v;
-          }
-          const pad = (yHi - yLo) * 0.08 || Math.abs(yHi) * 0.08 || 0.5;
-          yLo -= pad;
-          yHi += pad;
+    if (sharedEnds.size > 0) {
+      let yLo = Infinity;
+      let yHi = -Infinity;
+      for (const s of current) {
+        for (const p of s.points) {
+          const v = metricValue(p, metrics[0]);
+          if (v < yLo) yLo = v;
+          if (v > yHi) yHi = v;
+        }
+      }
+      if (Number.isFinite(yLo) && Number.isFinite(yHi)) {
+        const pad = (yHi - yLo) * 0.08 || Math.abs(yHi) * 0.08 || 0.5;
+        yLo -= pad;
+        yHi += pad;
 
+        for (const { bookmark: b, x } of sharedEnds.values()) {
           const hoverText = `${b.note}<br>${b.time}`;
           const hx: (string | number)[] = [];
           const hy: number[] = [];
@@ -637,8 +726,7 @@ export function SensorPlot({
           traces.push({
             type: "scatter",
             mode: "lines",
-            name: `${name} ${b.note}`,
-            legendgroup: s.meta.id,
+            name: b.note,
             showlegend: false,
             x: hx,
             y: hy,
@@ -648,7 +736,7 @@ export function SensorPlot({
             text: ht,
           });
           meta.push({
-            trialId: s.meta.id,
+            trialId: "",
             kind: "bookmark",
             color: END_LINE_COLOR,
             metric: metrics[0],
@@ -665,8 +753,29 @@ export function SensorPlot({
             line: { color: END_LINE_COLOR, width: 1, dash: "dot" },
             opacity: 0.7,
           });
-          continue;
         }
+      }
+    }
+
+    current.forEach((s) => {
+      const color = colors[s.meta.id] ?? "#888";
+      const name = legendName(s);
+      const startIso = sessionStartIso(
+        s.points[0]?.time,
+        s.meta.sessionStartTime,
+      );
+      const bookmarks = plotBookmarksForSeries(s).filter(
+        (b) => !isComputedEndBookmark(b),
+      );
+      if (!bookmarks.length) return;
+
+      const bx: (string | number)[] = [];
+      const by: number[] = [];
+      const texts: string[] = [];
+
+      for (const b of bookmarks) {
+        const x = bookmarkPlotX(b, s.points[0]?.time, mode, startIso);
+        if (x === null) continue;
 
         const y = metricValueAtBookmark(s.points, b, metrics[0]);
         if (y === null) continue;

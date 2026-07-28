@@ -73,6 +73,13 @@ function ToggleGroup({
   );
 }
 
+function resolutionToggleTitle(fullResolution: boolean): string {
+  if (fullResolution) {
+    return "Full res: every CSV row. Real sensor outages longer than 10 seconds are shown as gaps, and LOWESS is fit separately on each continuous run.";
+  }
+  return "Sampled mode: about 1800 evenly spaced points per trial for speed. Gap detection is disabled here because sampling can skip the exact outage boundaries and create misleading breaks or connections. Turn on Full res to see true gaps longer than 10 seconds.";
+}
+
 export function PlotWorkspace() {
   const [trials, setTrials] = useState<TrialMeta[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
@@ -364,7 +371,7 @@ export function PlotWorkspace() {
             labelOff="Sampled"
             on={fullResolution}
             onChange={setFullResolutionAndRefresh}
-            title="Sampled: ~1800 evenly spaced points per trial (faster). Full res: every CSV row."
+            title={resolutionToggleTitle(fullResolution)}
           />
 
           {loading || plotBusy ? (
