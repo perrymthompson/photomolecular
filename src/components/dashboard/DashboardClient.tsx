@@ -6,6 +6,9 @@ import { SyncFolderButton } from "@/components/dashboard/SyncFolderButton";
 import { TrialTree } from "@/components/dashboard/TrialTree";
 import { sortTrials } from "@/lib/trial-sort";
 import type { TrialMeta } from "@/types/trial";
+import { DataImportEditor } from "@/components/dashboard/DataImportEditor";
+
+const HIDDEN_TRIAL_FILENAMES = new Set(["DataImport.csv"]);
 
 export function DashboardClient() {
   const [trials, setTrials] = useState<TrialMeta[]>([]);
@@ -34,6 +37,9 @@ export function DashboardClient() {
   }, []);
 
   const existingFilenames = trials.map((t) => t.filename);
+  const visibleTrials = trials.filter(
+    (t) => !HIDDEN_TRIAL_FILENAMES.has(t.filename),
+  );
 
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
@@ -58,6 +64,8 @@ export function DashboardClient() {
 
       <SyncFolderButton onSynced={() => void refresh()} />
 
+      <DataImportEditor onImported={() => void refresh()} />
+
       {loadError ? (
         <p className="rounded border border-[#E2574C]/40 bg-[#E2574C]/10 px-3 py-2 text-sm text-[#E2574C]">
           {loadError}
@@ -65,7 +73,7 @@ export function DashboardClient() {
       ) : null}
 
       <TrialTree
-        trials={trials}
+        trials={visibleTrials}
         onSaved={(updated) =>
           setTrials((prev) =>
             sortTrials(prev.map((x) => (x.id === updated.id ? updated : x))),
