@@ -47,8 +47,10 @@ function storagePathForUpload(filename: string, buf: Buffer): string {
 
 async function listLocalCsvFiles(): Promise<string[]> {
   try {
-    return (await fs.readdir(CSV_DIR)).filter((f) =>
-      f.toLowerCase().endsWith(".csv"),
+    return (await fs.readdir(CSV_DIR)).filter(
+      (f) =>
+        f.toLowerCase().endsWith(".csv") &&
+        f.toLowerCase() !== "dataimport.csv",
     );
   } catch {
     return [];

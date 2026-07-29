@@ -137,7 +137,11 @@ export async function syncLocalInventory(): Promise<TrialMeta[]> {
   const meta = await readLocalMeta();
   let files: string[] = [];
   try {
-    files = (await fs.readdir(CSV_DIR)).filter((f) => f.toLowerCase().endsWith(".csv"));
+    files = (await fs.readdir(CSV_DIR)).filter(
+      (f) =>
+        f.toLowerCase().endsWith(".csv") &&
+        f.toLowerCase() !== "dataimport.csv",
+    );
   } catch {
     files = [];
   }
@@ -184,19 +188,22 @@ async function listSupabaseTrials(): Promise<TrialMeta[]> {
 }
 
 export async function listTrials(): Promise<TrialMeta[]> {
+  const filterMeta = (trials: TrialMeta[]) =>
+    trials.filter((t) => t.filename.toLowerCase() !== "dataimport.csv");
+
   if (shouldUseSupabase()) {
     requireSupabaseConfigured("Remote trial listing");
     try {
       const remote = await listSupabaseTrials();
-      if (remote.length > 0) return remote;
-      if (dataSourceMode() === "remote") return remote;
+      if (remote.length > 0) return filterMeta(remote);
+      if (dataSourceMode() === "remote") return filterMeta(remote);
       // Supabase connected but empty in auto mode — fall back to bundled/local CSV inventory
     } catch {
       if (dataSourceMode() === "remote") throw new Error("Failed to load trials from Supabase.");
       // fall through to local in auto mode
     }
   }
-  return syncLocalInventory();
+  return filterMeta(await syncLocalInventory());
 }
 
 async function getTrialById(id: string): Promise<TrialMeta | null> {

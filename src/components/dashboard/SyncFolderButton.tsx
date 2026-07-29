@@ -1,17 +1,11 @@
 "use client";
 
 import { useState } from "react";
+import type { DataImportResult } from "@/lib/import-dataimport";
 import type { SyncResult } from "@/lib/sync-csv";
 
 type Props = {
   onSynced: () => void;
-};
-
-type DataImportResponse = {
-  ok: boolean;
-  stdout?: string;
-  stderr?: string;
-  error?: string;
 };
 
 export function SyncFolderButton({ onSynced }: Props) {
@@ -55,15 +49,15 @@ export function SyncFolderButton({ onSynced }: Props) {
     setMessage(null);
     try {
       const res = await fetch("/api/csv/dataimport", { method: "POST" });
-      const body = (await res.json()) as DataImportResponse;
-      if (!res.ok || !body.ok) {
+      const body = (await res.json()) as DataImportResult & {
+        ok?: boolean;
+        error?: string;
+      };
+      if (!res.ok || body.ok === false) {
         throw new Error(body.error ?? "DataImport run failed");
       }
       setOk(true);
-      const lines: string[] = ["Applied DataImport.csv updates."];
-      if (body.stdout?.trim()) lines.push(body.stdout.trim());
-      if (body.stderr?.trim()) lines.push(`stderr:\n${body.stderr.trim()}`);
-      setMessage(lines.join("\n"));
+      setMessage(body.message);
       onSynced();
     } catch (e) {
       setOk(false);
@@ -84,8 +78,9 @@ export function SyncFolderButton({ onSynced }: Props) {
             registers new files.{" "}
             <strong className="font-normal text-[#b5b5b8]">Refresh data</strong>{" "}
             re-uploads changed CSVs and keeps notes / bookmarks / session
-            starts. <strong className="font-normal text-[#b5b5b8]">Run DataImport</strong>{" "}
-            applies the `DataImport.csv` mapping to matching trials.
+            starts.{" "}
+            <strong className="font-normal text-[#b5b5b8]">Run DataImport</strong>{" "}
+            applies the DataImport.csv mapping to matching trials.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
@@ -111,7 +106,7 @@ export function SyncFolderButton({ onSynced }: Props) {
             disabled={busy}
             onClick={() => void runDataImport()}
             title="Apply plot labels, notes, and session starts from DataImport.csv"
-            className="rounded border border-[#7B68EE] px-4 py-2 text-sm font-medium text-[#C7BEFF] hover:bg-[#7B68EE]/10 disabled:opacity-50"
+            className="rounded border border-[#3a3b3f] px-4 py-2 text-sm font-medium text-[#e8e8e8] hover:bg-[#2a2b2e] disabled:opacity-50"
           >
             {busy ? "Working…" : "Run DataImport"}
           </button>
