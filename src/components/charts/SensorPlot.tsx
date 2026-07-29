@@ -218,11 +218,14 @@ function buildRawTraceSeries(
   return { x, y, text, customdata };
 }
 
-/** Legend / hover label: channel · filename (unique when multiple ch1s exist). */
+/** Legend / hover label: channel · filename · optional plot label. */
 function legendName(s: TrialSeries): string {
   const dup = s.meta.label;
   const short = s.meta.filename.replace(/\.csv$/i, "");
-  return `${dup} · ${short}`;
+  const plotLabel = s.meta.plotLabel?.trim();
+  return plotLabel
+    ? `${dup} · ${short} · ${plotLabel}`
+    : `${dup} · ${short}`;
 }
 
 /**
@@ -900,19 +903,6 @@ export function SensorPlot({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [base, bookmarkLayer, mode, metrics, height, plotLabelsKey, pointsKey]);
 
-  const plotLabelRows = useMemo(
-    () =>
-      series
-        .map((s) => ({
-          id: s.meta.id,
-          name: legendName(s),
-          plotLabel: s.meta.plotLabel?.trim() ?? "",
-          color: colors[s.meta.id] ?? "#888",
-        }))
-        .filter((row) => row.plotLabel.length > 0),
-    [series, colors],
-  );
-
   const data = useMemo(
     () => [...base.traces, ...bookmarkLayer.traces],
     [base.traces, bookmarkLayer.traces],
@@ -995,30 +985,6 @@ export function SensorPlot({
         }}
         onClick={handleClick}
       />
-      {plotLabelRows.length > 0 ? (
-        <div className="border-t border-[#3a3b3f] px-4 py-2">
-          <p className="mb-1.5 text-[10px] font-semibold uppercase tracking-wide text-[#8a8a8d]">
-            Labels
-          </p>
-          <div className="flex flex-wrap gap-x-4 gap-y-1.5">
-            {plotLabelRows.map((row) => (
-              <div
-                key={row.id}
-                className="flex min-w-0 max-w-full items-baseline gap-2 text-xs"
-              >
-                <span
-                  className="inline-block h-2 w-2 shrink-0 rounded-full"
-                  style={{ backgroundColor: row.color }}
-                />
-                <span className="truncate text-[#b5b5b8]">{row.name}</span>
-                <span className="truncate font-medium text-[#e8e8e8]">
-                  {row.plotLabel}
-                </span>
-              </div>
-            ))}
-          </div>
-        </div>
-      ) : null}
     </div>
   );
 }
