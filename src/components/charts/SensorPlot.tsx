@@ -48,6 +48,7 @@ import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
 import {
   bookmarkPlotX,
   isComputedEndBookmark,
+  isComputedStartBookmark,
   plotBookmarksForSeries,
 } from "@/lib/x-run-dynamic-bookmarks";
 import { LOWESS_SPAN, lowess } from "@/lib/lowess";
@@ -788,7 +789,7 @@ export function SensorPlot({
         bx.push(x);
         by.push(y);
         texts.push(
-          `<span style="color:${color}">◆</span> ${s.meta.label}<br>Bookmark ${b.time}<br>${b.note}`,
+          `<span style="color:${color}">◆</span> ${s.meta.label}<br>${isComputedStartBookmark(b) ? "Start" : "Bookmark"} ${b.time}<br>${b.note}`,
         );
         shapes.push({
           type: "line",

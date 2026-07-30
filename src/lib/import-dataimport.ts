@@ -1,16 +1,14 @@
 /**
- * Apply metadata from data/csv/DataImport.csv onto matching ch1/ch2 trials.
- * Callable from the dashboard API (same idea as runCsvSync).
- *
- * Maps: Chamber + Date + Letter → ch{1|2}_MMDDYYYY{A|B|C}_lau.csv
- * Writes: plot_label, session_start_time, notes
+ * Apply metadata from data/import/trial-metadata.csv onto matching ch1/ch2 trials.
  */
 import { promises as fs } from "fs";
 import path from "path";
-import Papa from "papaparse";
 import { getSupabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/client";
+import {
+  parseTrialMetadataRows,
+  readTrialMetadataCsv,
+} from "@/lib/trial-metadata-csv";
 
-const IMPORT_FILE = path.join(process.cwd(), "data", "csv", "DataImport.csv");
 const META_PATH = path.join(process.cwd(), "data", "metadata.json");
 
 export type DataImportUpdate = {
@@ -35,15 +33,6 @@ function pad2(n: string | number): string {
   return String(n).padStart(2, "0");
 }
 
-function parseDateToMmDdYyyy(raw: unknown): string | null {
-  const m = String(raw ?? "")
-    .trim()
-    .match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
-  if (!m) return null;
-  const [, mm, dd, yyyy] = m;
-  return `${pad2(mm)}${pad2(dd)}${yyyy}`;
-}
-
 function normalizeStart(raw: unknown): string | null {
   const val = String(raw ?? "").trim();
   if (!val) return null;
@@ -52,76 +41,41 @@ function normalizeStart(raw: unknown): string | null {
   return `${pad2(m[1])}:${m[2]}:${m[3] ?? "00"}`;
 }
 
-function buildPlotLabel(illuminationRaw: unknown, angleRaw: unknown): string {
-  const illumination = String(illuminationRaw ?? "").trim();
-  const angle = String(angleRaw ?? "").trim();
-  if (!illumination) return "";
-  if (/dark/i.test(illumination)) return "Dark";
-  if (/light/i.test(illumination)) return angle ? `Light, ${angle}` : "Light";
-  return illumination;
-}
-
-function combineNotes(aRaw: unknown, bRaw: unknown): string {
-  const a = String(aRaw ?? "").trim();
-  const b = String(bRaw ?? "").trim();
-  if (a && b) return `${a} ${b}`;
-  return a || b;
-}
-
-function toFilenameKey(
-  chamberRaw: unknown,
-  dateRaw: unknown,
-  letterRaw: unknown,
-): string | null {
-  const chamber = String(chamberRaw ?? "").trim();
-  const datePart = parseDateToMmDdYyyy(dateRaw);
-  const letter = String(letterRaw ?? "").trim().toUpperCase();
-  if (!/^[12]$/.test(chamber) || !datePart || !/^[A-C]$/.test(letter)) {
-    return null;
-  }
-  return `ch${chamber}_${datePart}${letter}_lau.csv`;
-}
-
-function parseImportRows(csvText: string): Record<string, string>[] {
-  const parsed = Papa.parse<Record<string, string>>(csvText, {
-    header: true,
-    skipEmptyLines: "greedy",
-  });
-  if (parsed.errors.length) {
-    const msg = parsed.errors
-      .slice(0, 3)
-      .map((e) => `${e.code} at row ${e.row}: ${e.message}`)
-      .join("; ");
-    throw new Error(`DataImport.csv parse error: ${msg}`);
-  }
-  return parsed.data;
-}
-
 export async function readPlannedUpdates(): Promise<{
   updatesByFilename: Map<string, DataImportUpdate>;
   badRows: number[];
+  sourceLabel: string;
 }> {
-  const text = await fs.readFile(IMPORT_FILE, "utf8");
-  const rows = parseImportRows(text);
+  const { csvText, source } = await readTrialMetadataCsv();
+  const rows = parseTrialMetadataRows(csvText);
   const updatesByFilename = new Map<string, DataImportUpdate>();
   const badRows: number[] = [];
 
   rows.forEach((row, idx) => {
-    const filename = toFilenameKey(row["Chamber"], row["Date"], row["Letter"]);
-    if (!filename) {
+    const filename = String(row.filename ?? "").trim();
+    const plotLabel = String(row.plot_label ?? "").trim();
+    const sessionStartTime = normalizeStart(row.session_start);
+    const notes = String(row.notes ?? "").trim();
+
+    if (!filename.toLowerCase().endsWith(".csv")) {
       badRows.push(idx + 2);
       return;
     }
+
     updatesByFilename.set(filename, {
       filename,
-      plotLabel: buildPlotLabel(row["Illumination state"], row["Angle"]),
-      sessionStartTime: normalizeStart(row["Start"]),
-      notes: combineNotes(row["Notes A"], row["Notes B"]),
+      plotLabel,
+      sessionStartTime,
+      notes,
       rowNumber: idx + 2,
     });
   });
 
-  return { updatesByFilename, badRows };
+  return {
+    updatesByFilename,
+    badRows,
+    sourceLabel: source === "storage" ? "trial-metadata.csv (storage)" : "trial-metadata.csv",
+  };
 }
 
 async function applySupabase(
@@ -236,12 +190,14 @@ async function applyLocal(
 }
 
 export async function runDataImport(): Promise<DataImportResult> {
-  const { updatesByFilename, badRows } = await readPlannedUpdates();
+  const { updatesByFilename, badRows, sourceLabel } =
+    await readPlannedUpdates();
   const applied =
     (await applySupabase(updatesByFilename)) ??
     (await applyLocal(updatesByFilename));
 
   const parts = [
+    `Source: ${sourceLabel}`,
     `Mapped ${applied.mapped} row(s)`,
     `updated ${applied.updated}`,
     `unchanged ${applied.unchanged}`,

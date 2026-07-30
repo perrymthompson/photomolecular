@@ -8,6 +8,9 @@ type Props = {
   onSynced: () => void;
 };
 
+const IMPORT_WARNING =
+  "Run DataImport will overwrite plot_label, session_start_time, and notes on all matching ch1/ch2 trials from trial-metadata.csv. This cannot be undone easily. Continue?";
+
 export function SyncFolderButton({ onSynced }: Props) {
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
@@ -45,6 +48,7 @@ export function SyncFolderButton({ onSynced }: Props) {
   };
 
   const runDataImport = async () => {
+    if (!window.confirm(IMPORT_WARNING)) return;
     setBusy(true);
     setMessage(null);
     try {
@@ -80,7 +84,8 @@ export function SyncFolderButton({ onSynced }: Props) {
             re-uploads changed CSVs and keeps notes / bookmarks / session
             starts.{" "}
             <strong className="font-normal text-[#b5b5b8]">Run DataImport</strong>{" "}
-            applies the DataImport.csv mapping to matching trials.
+            applies <code className="text-[#b5b5b8]">data/import/trial-metadata.csv</code>{" "}
+            to matching trials.
           </p>
         </div>
         <div className="flex shrink-0 flex-wrap gap-2">
@@ -105,7 +110,7 @@ export function SyncFolderButton({ onSynced }: Props) {
             type="button"
             disabled={busy}
             onClick={() => void runDataImport()}
-            title="Apply plot labels, notes, and session starts from DataImport.csv"
+            title="Apply plot labels, notes, and session starts from data/import/trial-metadata.csv"
             className="rounded border border-[#3a3b3f] px-4 py-2 text-sm font-medium text-[#e8e8e8] hover:bg-[#2a2b2e] disabled:opacity-50"
           >
             {busy ? "Working…" : "Run DataImport"}

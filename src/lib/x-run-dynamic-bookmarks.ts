@@ -21,17 +21,17 @@ function channelRank(channel: string): number {
   return i >= 0 ? i : 99;
 }
 
-/** Resolve bookmark clock onto trial timeline (handles next-day ends). */
-function resolveEndInstant(
+/** Resolve bookmark clock onto trial timeline (handles next-day times). */
+function resolveClockInstant(
   firstSampleIso: string,
   clockTime: string,
 ): string {
   let iso = sessionStartIso(firstSampleIso, clockTime);
   if (!iso) return firstSampleIso;
   const firstMs = Date.parse(firstSampleIso);
-  const endMs = Date.parse(iso);
-  if (endMs < firstMs) {
-    iso = new Date(endMs + 86_400_000).toISOString();
+  const targetMs = Date.parse(iso);
+  if (targetMs < firstMs) {
+    iso = new Date(targetMs + 86_400_000).toISOString();
   }
   return iso;
 }
@@ -59,7 +59,7 @@ export function endTimeForTrial(
       const m = note.match(/Trial\s+([ABC])\b/i);
       if (m && m[1].toUpperCase() !== runLetter) continue;
     }
-    const plotIso = resolveEndInstant(firstIso, b.time);
+    const plotIso = resolveClockInstant(firstIso, b.time);
     return {
       time: normalizeClockTime(b.time),
       plotIso,
@@ -73,6 +73,116 @@ export function endTimeForTrial(
     plotIso: last.time,
     sourceChannel: parsed?.channel ?? meta.label,
   };
+}
+
+export type SiblingStartMarker = {
+  time: string;
+  plotIso: string;
+  sourceChannel: string;
+};
+
+/** Session start for one A/B/C trial (manual sessionStartTime, else start bookmark). */
+export function startTimeForTrial(
+  meta: TrialMeta,
+  points: SensorPoint[],
+): SiblingStartMarker | null {
+  if (!points.length) return null;
+  const parsed = parseTrialFilename(meta.filename);
+  const runLetter = parsed?.run ?? "";
+  const firstIso = points[0].time;
+
+  if (meta.sessionStartTime?.trim()) {
+    const time = normalizeClockTime(meta.sessionStartTime);
+    return {
+      time,
+      plotIso: resolveClockInstant(firstIso, time),
+      sourceChannel: parsed?.channel ?? meta.label,
+    };
+  }
+
+  for (const b of meta.bookmarks ?? []) {
+    const note = (b.note || "").trim();
+    if (!/start/i.test(note) || /end/i.test(note)) continue;
+    if (runLetter) {
+      const m = note.match(/Trial\s+([ABC])\b/i);
+      if (m && m[1].toUpperCase() !== runLetter) continue;
+    }
+    return {
+      time: normalizeClockTime(b.time),
+      plotIso: b.plotIso ?? resolveClockInstant(firstIso, b.time),
+      sourceChannel: parsed?.channel ?? meta.label,
+    };
+  }
+
+  return null;
+}
+
+/**
+ * Plot-only "Trial A/B/C start" markers for an X-run trial.
+ * Each run letter has its own start time from sibling A/B/C session starts.
+ * Source priority per run: amb → ch1 → ch2 → ch3.
+ */
+export async function computeXRunDynamicStartBookmarks(
+  xMeta: TrialMeta,
+  allTrials: TrialMeta[],
+  loadSeries: (id: string) => Promise<{ meta: TrialMeta; points: SensorPoint[] } | null>,
+  seriesCache: Map<string, { meta: TrialMeta; points: SensorPoint[] } | null>,
+): Promise<TrialBookmark[]> {
+  const xParsed = parseTrialFilename(xMeta.filename);
+  if (!xParsed || xParsed.run !== "X") return [];
+
+  const stored = xMeta.bookmarks ?? [];
+  const out: TrialBookmark[] = [];
+
+  const byRun = new Map<string, TrialMeta[]>();
+  for (const t of allTrials) {
+    const p = parseTrialFilename(t.filename);
+    if (!p || p.date !== xParsed.date || !p.run || p.run === "X") continue;
+    const list = byRun.get(p.run) ?? [];
+    list.push(t);
+    byRun.set(p.run, list);
+  }
+
+  const runLetters = [...byRun.keys()].sort();
+
+  for (const runLetter of runLetters) {
+    const candidates = (byRun.get(runLetter) ?? []).sort(
+      (a, b) =>
+        channelRank(parseTrialFilename(a.filename)!.channel) -
+        channelRank(parseTrialFilename(b.filename)!.channel),
+    );
+    if (!candidates.length) continue;
+
+    let start: SiblingStartMarker | null = null;
+    for (const trial of candidates) {
+      let cached = seriesCache.get(trial.id);
+      if (cached === undefined) {
+        cached = await loadSeries(trial.id);
+        seriesCache.set(trial.id, cached);
+      }
+      if (!cached) continue;
+      start = startTimeForTrial(cached.meta, cached.points);
+      if (start) break;
+    }
+    if (!start) continue;
+
+    const hasStoredStart = stored.some(
+      (b) =>
+        clockTimesEqual(b.time, start.time) &&
+        /start/i.test(b.note) &&
+        !/end/i.test(b.note),
+    );
+    if (hasStoredStart) continue;
+
+    out.push({
+      id: `computed:start:${xParsed.date}:${runLetter}`,
+      time: start.time,
+      note: `Trial ${runLetter} start (${start.sourceChannel})`,
+      plotIso: start.plotIso,
+    });
+  }
+
+  return out;
 }
 
 /**
@@ -154,6 +264,14 @@ export function plotBookmarksForSeries(series: {
 
 export function isComputedEndBookmark(b: TrialBookmark): boolean {
   return b.id.startsWith("computed:end:");
+}
+
+export function isComputedStartBookmark(b: TrialBookmark): boolean {
+  return b.id.startsWith("computed:start:");
+}
+
+export function isComputedBookmark(b: TrialBookmark): boolean {
+  return isComputedEndBookmark(b) || isComputedStartBookmark(b);
 }
 
 /** Resolve bookmark onto plot x-axis (calendar ISO or aligned minutes). */

@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { CsvUploader } from "@/components/dashboard/CsvUploader";
 import { SyncFolderButton } from "@/components/dashboard/SyncFolderButton";
+import { TrialMetadataCsvPanel } from "@/components/dashboard/TrialMetadataCsvPanel";
 import { TrialTree } from "@/components/dashboard/TrialTree";
 import { sortTrials } from "@/lib/trial-sort";
 import type { TrialMeta } from "@/types/trial";
@@ -62,6 +63,8 @@ export function DashboardClient() {
       />
 
       <SyncFolderButton onSynced={() => void refresh()} />
+
+      <TrialMetadataCsvPanel />
 
       {loadError ? (
         <p className="rounded border border-[#E2574C]/40 bg-[#E2574C]/10 px-3 py-2 text-sm text-[#E2574C]">

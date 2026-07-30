@@ -5,6 +5,7 @@ import { parseChamberCsv } from "@/lib/parse-csv";
 import { BUCKET, getSupabaseAdmin, isSupabaseConfigured } from "@/lib/supabase/client";
 import {
   computeXRunDynamicEndBookmarks,
+  computeXRunDynamicStartBookmarks,
 } from "@/lib/x-run-dynamic-bookmarks";
 import {
   collectMirroredBookmarks,
@@ -356,7 +357,7 @@ export async function loadManySeries(ids: string[]): Promise<TrialSeries[]> {
 }
 
 /**
- * Load series for plotting and attach computed X-run end bookmarks (replot only).
+ * Load series for plotting and attach computed X-run start/end bookmarks (replot only).
  */
 export async function loadManySeriesForPlot(ids: string[]): Promise<TrialSeries[]> {
   const cache = new Map<string, TrialSeries | null>();
@@ -370,14 +371,22 @@ export async function loadManySeriesForPlot(ids: string[]): Promise<TrialSeries[
 
   const allTrials = await listTrials();
   const enriched: TrialSeries[] = [];
+  const loader = async (id: string) => loadTrialSeries(id);
 
   for (const s of out) {
-    const computed = await computeXRunDynamicEndBookmarks(
+    const starts = await computeXRunDynamicStartBookmarks(
       s.meta,
       allTrials,
-      async (id) => loadTrialSeries(id),
+      loader,
       cache,
     );
+    const ends = await computeXRunDynamicEndBookmarks(
+      s.meta,
+      allTrials,
+      loader,
+      cache,
+    );
+    const computed = [...starts, ...ends];
     enriched.push(
       computed.length ? { ...s, computedBookmarks: computed } : s,
     );

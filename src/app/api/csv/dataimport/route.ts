@@ -3,7 +3,7 @@ import { runDataImport } from "@/lib/import-dataimport";
 
 export const runtime = "nodejs";
 
-/** Apply metadata from data/csv/DataImport.csv onto matching trials. */
+/** Apply metadata from data/import/trial-metadata.csv onto matching trials. */
 export async function POST() {
   try {
     const result = await runDataImport();
