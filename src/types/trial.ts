@@ -64,10 +64,11 @@ export type TrialSeries = {
 
 export type PlotMode = "calendar" | "aligned";
 
-export type MetricKey = "absHumidity" | "rh" | "temp";
+export type MetricKey = "absHumidity" | "rh" | "temp" | "ahRate";
 
 export const METRIC_LABELS: Record<MetricKey, string> = {
   absHumidity: "Absolute Humidity (g/m³)",
   rh: "Relative Humidity (%RH)",
   temp: "Temperature (°C)",
+  ahRate: "AH Rate dAH/dt (g/m³/min)",
 };

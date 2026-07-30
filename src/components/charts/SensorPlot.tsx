@@ -2,7 +2,7 @@
 
 /**
  * =============================================================================
- * SensorPlot — chamber sensor plotting (AH / RH / Temp)
+ * SensorPlot — chamber sensor plotting (AH / RH / Temp / dAH/dt)
  * =============================================================================
  *
  * This is the main Plotly renderer. Data arrives already computed as
@@ -19,6 +19,7 @@
  *   - absHumidity  Absolute Humidity (g/m³)  — computed, not logged directly
  *   - rh           Relative Humidity (%RH)   — from CSV measure type containing "RH"
  *   - temp         Temperature (°C)          — non-RH rows in the CSV
+ *   - ahRate       AH Rate dAH/dt (g/m³/min) — finite difference of absHumidity vs time
  *
  * X-AXIS MODES:
  *   - calendar ("Clock time"):  ISO timestamps; Plotly date axis, tick %H:%M
@@ -65,7 +66,7 @@ export type PlotTimePick = {
 type Props = {
   series: TrialSeries[];
   mode: PlotMode;
-  /** Which y-panels to show. Combined view passes all three. */
+  /** Which y-panels to show. Combined view passes all four metrics. */
   metrics?: MetricKey[];
   height?: number;
   /** Bumped by parent to force Plotly remount after view/mode changes. */
@@ -96,6 +97,7 @@ const METRIC_SHORT: Record<MetricKey, { short: string; unit: string }> = {
   absHumidity: { short: "AH", unit: "g/m³" },
   rh: { short: "RH", unit: "%RH" },
   temp: { short: "Temp", unit: "°C" },
+  ahRate: { short: "dAH/dt", unit: "g/m³/min" },
 };
 
 /** Stable fingerprint of sensor points (ignores bookmark/notes edits). */
@@ -122,11 +124,66 @@ function plotLabelFingerprint(series: TrialSeries[]): string {
   return series.map((s) => `${s.meta.id}:${s.meta.plotLabel ?? ""}`).join("|");
 }
 
-/** Pick the numeric y-value for a metric from one sample point. */
+/** Pick the numeric y-value for a stored metric from one sample point. */
 function metricValue(p: TrialSeries["points"][0], key: MetricKey): number {
   if (key === "absHumidity") return p.absHumidity;
   if (key === "rh") return p.rh;
-  return p.temp;
+  if (key === "temp") return p.temp;
+  return Number.NaN;
+}
+
+/**
+ * First derivative of absolute humidity vs time (g/m³ per minute).
+ * Centered differences interior; one-sided at ends. Breaks across large gaps.
+ */
+function ahRateSeries(
+  points: TrialSeries["points"],
+  maxGapMs: number,
+): number[] {
+  const n = points.length;
+  const out = new Array<number>(n).fill(Number.NaN);
+  if (n < 2) return out;
+
+  const times = points.map((p) => Date.parse(p.time));
+  const ahs = points.map((p) => p.absHumidity);
+
+  for (let i = 0; i < n; i++) {
+    let i0: number;
+    let i1: number;
+    if (i === 0) {
+      i0 = 0;
+      i1 = 1;
+    } else if (i === n - 1) {
+      i0 = n - 2;
+      i1 = n - 1;
+    } else {
+      i0 = i - 1;
+      i1 = i + 1;
+    }
+
+    const t0 = times[i0];
+    const t1 = times[i1];
+    if (!Number.isFinite(t0) || !Number.isFinite(t1)) continue;
+    const dtMs = t1 - t0;
+    const spanSteps = i1 - i0;
+    const maxAllowed = Number.isFinite(maxGapMs)
+      ? maxGapMs * Math.max(1, spanSteps)
+      : Infinity;
+    if (dtMs <= 0 || dtMs > maxAllowed) continue;
+
+    out[i] = ((ahs[i1] - ahs[i0]) / dtMs) * 60_000;
+  }
+  return out;
+}
+
+/** Y values for a metric across a point list (handles derived ahRate). */
+function metricSeries(
+  points: TrialSeries["points"],
+  key: MetricKey,
+  maxGapMs = Infinity,
+): number[] {
+  if (key === "ahRate") return ahRateSeries(points, maxGapMs);
+  return points.map((p) => metricValue(p, key));
 }
 
 function splitContinuousPointRuns(
@@ -163,6 +220,7 @@ function buildRawTraceSeries(
   plotLabel: string,
   bookmarks: TrialBookmark[],
   breakOnGaps: boolean,
+  yValues: number[],
 ): {
   x: (string | number)[];
   y: Array<number | null>;
@@ -177,6 +235,7 @@ function buildRawTraceSeries(
   const text: string[] = [];
   const customdata: string[] = [];
 
+  let cursor = 0;
   runs.forEach((run, runIdx) => {
     if (runIdx > 0) {
       x.push(mode === "aligned" ? Number.NaN : run[0].time);
@@ -185,7 +244,9 @@ function buildRawTraceSeries(
       customdata.push("");
     }
 
-    for (const p of run) {
+    for (let j = 0; j < run.length; j++) {
+      const p = run[j];
+      const yValue = yValues[cursor + j];
       const xValue =
         mode === "aligned"
           ? startIso
@@ -200,19 +261,22 @@ function buildRawTraceSeries(
       }
 
       const nearby = nearbyBookmarkForSample(points[0]?.time, bookmarks, p.time);
-      const yValue = metricValue(p, metric);
+      const yPlot = Number.isFinite(yValue) ? yValue : null;
       x.push(xValue);
-      y.push(yValue);
+      y.push(yPlot);
       customdata.push(formatClockUtc(new Date(p.time)));
       text.push(
         [
           `<span style="color:${color}">●</span> ${label}`,
           ...(plotLabel.trim() ? [plotLabel.trim()] : []),
-          `${METRIC_SHORT[metric].short} ${yValue.toFixed(3)} ${METRIC_SHORT[metric].unit}`,
+          yPlot === null
+            ? `${METRIC_SHORT[metric].short} —`
+            : `${METRIC_SHORT[metric].short} ${yPlot.toFixed(3)} ${METRIC_SHORT[metric].unit}`,
           ...(nearby ? [`${nearby.time} - ${nearby.note}`] : []),
         ].join("<br>"),
       );
     }
+    cursor += run.length;
   });
 
   return { x, y, text, customdata };
@@ -274,18 +338,20 @@ function metricValueAtInstant(
   metric: MetricKey,
 ): number | null {
   const targetMs = Date.parse(targetIso);
-  if (!Number.isFinite(targetMs)) return null;
+  if (!Number.isFinite(targetMs) || points.length === 0) return null;
 
-  let best = points[0];
+  let bestIdx = 0;
   let bestDiff = Infinity;
-  for (const p of points) {
-    const diff = Math.abs(Date.parse(p.time) - targetMs);
+  for (let i = 0; i < points.length; i++) {
+    const diff = Math.abs(Date.parse(points[i].time) - targetMs);
     if (diff < bestDiff) {
-      best = p;
+      bestIdx = i;
       bestDiff = diff;
     }
   }
-  return best ? metricValue(best, metric) : null;
+  const ys = metricSeries(points, metric, FULL_RES_GAP_MS);
+  const v = ys[bestIdx];
+  return Number.isFinite(v) ? v : null;
 }
 
 function metricValueAtBookmark(
@@ -543,11 +609,14 @@ export function SensorPlot({
       const fullResRuns = fullResolution
         ? splitContinuousPointRuns(pts, FULL_RES_GAP_MS)
         : [pts];
+      const rateGapMs = fullResolution ? FULL_RES_GAP_MS : Infinity;
 
       metrics.forEach((metric, mi) => {
         const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
-        const ys = pts.map((p) => metricValue(p, metric));
-        metricValues[mi].push(...ys);
+        const ys = metricSeries(pts, metric, rateGapMs);
+        for (const v of ys) {
+          if (Number.isFinite(v)) metricValues[mi].push(v);
+        }
         if (mode === "aligned" && !startIso) return;
 
         const rawTrace = buildRawTraceSeries(
@@ -560,6 +629,7 @@ export function SensorPlot({
           s.meta.plotLabel ?? "",
           s.meta.bookmarks ?? [],
           fullResolution,
+          ys,
         );
 
         traces.push({
@@ -589,15 +659,24 @@ export function SensorPlot({
           fullResRuns.forEach((run, runIdx) => {
             if (run.length < 2) return;
 
-            const runYs = run.map((p) => metricValue(p, metric));
+            const allRunYs = metricSeries(run, metric, rateGapMs);
+            const pairs = run
+              .map((p, i) => ({ p, y: allRunYs[i] }))
+              .filter((row) => Number.isFinite(row.y));
+            if (pairs.length < 2) return;
+
             const xNum =
               mode === "aligned"
-                ? run.map((p) => (Date.parse(p.time) - Date.parse(startIso!)) / 60000)
-                : run.map((p) => Date.parse(p.time));
+                ? pairs.map(
+                    (row) =>
+                      (Date.parse(row.p.time) - Date.parse(startIso!)) / 60000,
+                  )
+                : pairs.map((row) => Date.parse(row.p.time));
+            const yNum = pairs.map((row) => row.y);
             const cacheKey = `${s.meta.id}|${metric}|${mode}|${runIdx}|${xNum.length}|${xNum[0]}|${xNum[xNum.length - 1]}`;
             let smooth = lowessCacheRef.current.get(cacheKey);
             if (!smooth) {
-              smooth = lowess(xNum, runYs, LOWESS_SPAN);
+              smooth = lowess(xNum, yNum, LOWESS_SPAN);
               lowessCacheRef.current.set(cacheKey, smooth);
             }
             const smoothX =
@@ -663,7 +742,8 @@ export function SensorPlot({
         },
         domain: [Math.max(0, bottom), top - 0.02],
         gridcolor: DARK_THEME.gridMajor,
-        zeroline: false,
+        zeroline: metric === "ahRate",
+        zerolinecolor: DARK_THEME.subtext,
         tickfont: { color: DARK_THEME.subtext, size: 10 },
         automargin: true,
         autorange: false,
@@ -706,8 +786,13 @@ export function SensorPlot({
       let yLo = Infinity;
       let yHi = -Infinity;
       for (const s of current) {
-        for (const p of s.points) {
-          const v = metricValue(p, metrics[0]);
+        const vals = metricSeries(
+          s.points,
+          metrics[0],
+          fullResolution ? FULL_RES_GAP_MS : Infinity,
+        );
+        for (const v of vals) {
+          if (!Number.isFinite(v)) continue;
           if (v < yLo) yLo = v;
           if (v > yHi) yHi = v;
         }

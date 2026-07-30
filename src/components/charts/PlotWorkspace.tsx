@@ -25,7 +25,7 @@ const TRIALS_PANEL_DEFAULT = { width: 280, height: 360 };
 const TRIALS_PANEL_MIN = { width: 200, height: 200 };
 const TRIALS_PANEL_MAX = { width: 520, height: 900 };
 
-type PlotView = "combined" | "ah" | "rh" | "temp";
+type PlotView = "combined" | "ah" | "rh" | "temp" | "ahRate";
 
 type PersistedPlotWorkspaceState = {
   selectedIds?: string[];
@@ -204,7 +204,8 @@ export function PlotWorkspace() {
         parsed.view === "combined" ||
         parsed.view === "ah" ||
         parsed.view === "rh" ||
-        parsed.view === "temp"
+        parsed.view === "temp" ||
+        parsed.view === "ahRate"
       ) {
         setView(parsed.view);
       }
@@ -323,12 +324,14 @@ export function PlotWorkspace() {
 
   const metrics: MetricKey[] =
     view === "combined"
-      ? ["absHumidity", "rh", "temp"]
+      ? ["absHumidity", "rh", "temp", "ahRate"]
       : view === "ah"
         ? ["absHumidity"]
         : view === "rh"
           ? ["rh"]
-          : ["temp"];
+          : view === "temp"
+            ? ["temp"]
+            : ["ahRate"];
 
   const alignedReady = series.length > 0 && series.every((s) => s.meta.sessionStartTime);
   const visibleSeries = useMemo(
@@ -382,7 +385,7 @@ export function PlotWorkspace() {
     });
   }, []);
 
-  const plotHeight = view !== "combined" ? 520 : 780;
+  const plotHeight = view === "combined" ? 1000 : 520;
 
   return (
     <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-6 px-4 py-6 lg:flex-row lg:items-start xl:px-6">
@@ -436,6 +439,7 @@ export function PlotWorkspace() {
                 ["ah", "AH"],
                 ["rh", "RH"],
                 ["temp", "Temp"],
+                ["ahRate", "dAH/dt"],
               ] as const
             ).map(([k, label]) => (
               <button
