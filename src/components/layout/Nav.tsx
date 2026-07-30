@@ -8,7 +8,7 @@ const links = [
 export function Nav() {
   return (
     <header className="border-b border-[#3a3b3f] bg-[#16171a]">
-      <div className="mx-auto flex max-w-7xl items-center justify-between gap-4 px-4 py-3">
+      <div className="mx-auto flex w-full max-w-[1920px] items-center justify-between gap-4 px-4 py-3 xl:px-6">
         <Link href="/" className="text-sm font-semibold tracking-tight text-white">
           Photomolecular Lab · Chamber Sensors
         </Link>

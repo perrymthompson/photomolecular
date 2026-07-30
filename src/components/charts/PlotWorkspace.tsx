@@ -382,10 +382,10 @@ export function PlotWorkspace() {
     });
   }, []);
 
-  const plotHeight = view !== "combined" ? 480 : 720;
+  const plotHeight = view !== "combined" ? 520 : 780;
 
   return (
-    <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 lg:flex-row lg:items-start">
+    <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-6 px-4 py-6 lg:flex-row lg:items-start xl:px-6">
       <aside
         className="relative flex shrink-0 flex-col rounded-lg border border-[#3a3b3f] bg-[#16171a] p-3"
         style={{ width: panelWidth, height: panelHeight }}
@@ -522,7 +522,7 @@ export function PlotWorkspace() {
           </p>
         ) : null}
 
-        <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
+        <div className="grid gap-4 xl:grid-cols-[minmax(0,1fr)_minmax(260px,320px)]">
           <div className="min-w-0 space-y-4">
             <div
               className={`relative ${loading || plotBusy ? "pointer-events-none" : ""}`}
@@ -555,7 +555,7 @@ export function PlotWorkspace() {
                   }}
                 />
               ) : (
-                <div className="flex h-[480px] items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
+                <div className="flex h-[520px] items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
                   {mode === "aligned" && series.length > 0
                     ? "Selected trials need session start times (set them on Dashboard)."
                     : "Select one or more trials to plot."}
@@ -573,7 +573,7 @@ export function PlotWorkspace() {
           </div>
 
           {visibleSeries.length > 0 ? (
-            <div className="min-w-0 2xl:sticky 2xl:top-6 2xl:self-start">
+            <div className="min-w-0 xl:sticky xl:top-6 xl:self-start">
               <PlotTrialNotes series={visibleSeries} onSaved={handleTrialUpdated} />
             </div>
           ) : null}
