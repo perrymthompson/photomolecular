@@ -25,7 +25,15 @@ const TRIALS_PANEL_DEFAULT = { width: 280, height: 360 };
 const TRIALS_PANEL_MIN = { width: 200, height: 200 };
 const TRIALS_PANEL_MAX = { width: 520, height: 900 };
 
-type PlotView = "combined" | "ah" | "rh" | "temp" | "ahRate";
+type PlotView =
+  | "combined"
+  | "ah"
+  | "rh"
+  | "temp"
+  | "ahRate"
+  | "vpd"
+  | "normRate"
+  | "ahRateVsVpd";
 
 type PersistedPlotWorkspaceState = {
   selectedIds?: string[];
@@ -39,6 +47,14 @@ type PersistedPlotWorkspaceState = {
 
 const SensorPlot = dynamic(
   () => import("@/components/charts/SensorPlot").then((mod) => mod.SensorPlot),
+  { ssr: false },
+);
+
+const EvapRateVsVpdPlot = dynamic(
+  () =>
+    import("@/components/charts/EvapRateVsVpdPlot").then(
+      (mod) => mod.EvapRateVsVpdPlot,
+    ),
   { ssr: false },
 );
 
@@ -205,7 +221,10 @@ export function PlotWorkspace() {
         parsed.view === "ah" ||
         parsed.view === "rh" ||
         parsed.view === "temp" ||
-        parsed.view === "ahRate"
+        parsed.view === "ahRate" ||
+        parsed.view === "vpd" ||
+        parsed.view === "normRate" ||
+        parsed.view === "ahRateVsVpd"
       ) {
         setView(parsed.view);
       }
@@ -322,6 +341,8 @@ export function PlotWorkspace() {
     void loadSeries(selectedIds);
   }, [selectedIds, loadSeries]);
 
+  const isScatterView = view === "ahRateVsVpd";
+
   const metrics: MetricKey[] =
     view === "combined"
       ? ["absHumidity", "rh", "temp", "ahRate"]
@@ -331,15 +352,21 @@ export function PlotWorkspace() {
           ? ["rh"]
           : view === "temp"
             ? ["temp"]
-            : ["ahRate"];
+            : view === "ahRate"
+              ? ["ahRate"]
+              : view === "vpd"
+                ? ["vpd"]
+                : view === "normRate"
+                  ? ["normRate"]
+                  : ["absHumidity"];
 
   const alignedReady = series.length > 0 && series.every((s) => s.meta.sessionStartTime);
   const visibleSeries = useMemo(
     () =>
-      mode === "aligned"
-        ? series.filter((s) => s.meta.sessionStartTime)
-        : series,
-    [mode, series],
+      isScatterView || mode !== "aligned"
+        ? series
+        : series.filter((s) => s.meta.sessionStartTime),
+    [isScatterView, mode, series],
   );
 
   const bumpPlot = () => {
@@ -432,7 +459,7 @@ export function PlotWorkspace() {
 
       <section className="min-w-0 flex-1 space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex rounded border border-[#3a3b3f] p-0.5">
+          <div className="flex flex-wrap rounded border border-[#3a3b3f] p-0.5">
             {(
               [
                 ["combined", "Combined"],
@@ -440,6 +467,9 @@ export function PlotWorkspace() {
                 ["rh", "RH"],
                 ["temp", "Temp"],
                 ["ahRate", "dAH/dt"],
+                ["vpd", "VPD"],
+                ["normRate", "Norm Rate"],
+                ["ahRateVsVpd", "dAH/dt vs VPD"],
               ] as const
             ).map(([k, label]) => (
               <button
@@ -457,6 +487,7 @@ export function PlotWorkspace() {
             ))}
           </div>
 
+          {!isScatterView ? (
           <div className="flex rounded border border-[#3a3b3f] p-0.5">
             <button
               type="button"
@@ -487,7 +518,9 @@ export function PlotWorkspace() {
               Align session starts
             </button>
           </div>
+          ) : null}
 
+          {!isScatterView ? (
           <ToggleGroup
             labelOn="Fit on"
             labelOff="Fit off"
@@ -495,7 +528,9 @@ export function PlotWorkspace() {
             onChange={setSmoothAndRefresh}
             title="Toggle LOWESS smooth fit curves"
           />
+          ) : null}
 
+          {!isScatterView ? (
           <ToggleGroup
             labelOn="Bookmarks on"
             labelOff="Bookmarks off"
@@ -503,6 +538,7 @@ export function PlotWorkspace() {
             onChange={setBookmarksAndRefresh}
             title="Toggle time bookmark markers"
           />
+          ) : null}
 
           <ToggleGroup
             labelOn="Full res"
@@ -541,33 +577,42 @@ export function PlotWorkspace() {
               ) : null}
 
               {visibleSeries.length > 0 ? (
-                <SensorPlot
-                  series={visibleSeries}
-                  mode={mode}
-                  metrics={metrics}
-                  height={plotHeight}
-                  plotRevision={plotRevision}
-                  showSmooth={showSmooth}
-                  showBookmarks={showBookmarks}
-                  fullResolution={fullResolution}
-                  onTimePick={({ trialId, time }) => {
-                    setBookmarkPrefill({
-                      trialId,
-                      time,
-                      nonce: Date.now(),
-                    });
-                  }}
-                />
+                isScatterView ? (
+                  <EvapRateVsVpdPlot
+                    series={visibleSeries}
+                    height={plotHeight}
+                    plotRevision={plotRevision}
+                    fullResolution={fullResolution}
+                  />
+                ) : (
+                  <SensorPlot
+                    series={visibleSeries}
+                    mode={mode}
+                    metrics={metrics}
+                    height={plotHeight}
+                    plotRevision={plotRevision}
+                    showSmooth={showSmooth}
+                    showBookmarks={showBookmarks}
+                    fullResolution={fullResolution}
+                    onTimePick={({ trialId, time }) => {
+                      setBookmarkPrefill({
+                        trialId,
+                        time,
+                        nonce: Date.now(),
+                      });
+                    }}
+                  />
+                )
               ) : (
                 <div className="flex h-[520px] items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
-                  {mode === "aligned" && series.length > 0
+                  {mode === "aligned" && series.length > 0 && !isScatterView
                     ? "Selected trials need session start times (set them on Dashboard)."
                     : "Select one or more trials to plot."}
                 </div>
               )}
             </div>
 
-            {visibleSeries.length > 0 ? (
+            {visibleSeries.length > 0 && !isScatterView ? (
               <PlotBookmarkAdd
                 series={visibleSeries}
                 prefill={bookmarkPrefill}

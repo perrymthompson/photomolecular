@@ -1,6 +1,7 @@
 /**
  * =============================================================================
- * Absolute humidity + filename helpers (matches the lab R plotting script)
+ * Absolute humidity + vapor pressure helpers (matches lab R script for AH;
+ * Tetens VPD form for Psat / Pa / VPD as used on the plot dashboard)
  * =============================================================================
  *
  * absoluteHumidity(rh, tempC) implements the Magnus–Tetens approximation:
@@ -8,17 +9,14 @@
  *   AH (g/m³) =
  *     (6.112 * exp((17.67 * T) / (T + 243.5)) * RH * 2.1674) / (273.15 + T)
  *
- * where:
- *   T  = temperature in °C          (from CSV non-RH rows)
- *   RH = relative humidity in %     (from CSV rows whose measure type has "RH")
- *
- * Constants:
- *   6.112 / 17.67 / 243.5  — Magnus vapor-pressure coefficients
- *   2.1674                 — converts vapor pressure × RH into g/m³ scale
- *   273.15                 — °C → Kelvin in the denominator
+ * Vapor pressure (kPa) for VPD:
+ *   Psat = 0.61078 * exp((17.27 * T) / (T + 237.3))
+ *   Pa   = Psat * (RH / 100)
+ *   VPD  = Psat - Pa
  *
  * This is computed once per matched (RH, Temp) timestamp in parse-csv.ts and
- * stored on SensorPoint.absHumidity. SensorPlot then plots that field.
+ * stored on SensorPoint.absHumidity. SensorPlot then plots that field; VPD and
+ * derived rates are computed on the fly in derived-metrics.ts / SensorPlot.
  *
  * VERIFY: pick a known (RH, Temp) pair from a CSV and compare AH to your R
  * script output for the same sample — they should match within floating error.
@@ -36,6 +34,25 @@ export function absoluteHumidity(rh: number, tempC: number): number {
     (6.112 * Math.exp((17.67 * tempC) / (tempC + 243.5)) * rh * 2.1674) /
     (273.15 + tempC)
   );
+}
+
+/**
+ * Saturation vapor pressure Psat (kPa) — Tetens form used for VPD:
+ *   Psat = 0.61078 * exp((17.27 * T) / (T + 237.3))
+ */
+export function saturationVaporPressureKPa(tempC: number): number {
+  return 0.61078 * Math.exp((17.27 * tempC) / (tempC + 237.3));
+}
+
+/** Actual vapor pressure Pa (kPa) = Psat × RH/100. */
+export function actualVaporPressureKPa(rh: number, tempC: number): number {
+  return saturationVaporPressureKPa(tempC) * (rh / 100);
+}
+
+/** Vapor pressure deficit VPD (kPa) = Psat − Pa. */
+export function vaporPressureDeficitKPa(rh: number, tempC: number): number {
+  const psat = saturationVaporPressureKPa(tempC);
+  return psat - psat * (rh / 100);
 }
 
 /** Extract "ch1" from "ch1_07242026A_lau.csv". */

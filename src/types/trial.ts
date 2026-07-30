@@ -64,11 +64,19 @@ export type TrialSeries = {
 
 export type PlotMode = "calendar" | "aligned";
 
-export type MetricKey = "absHumidity" | "rh" | "temp" | "ahRate";
+export type MetricKey =
+  | "absHumidity"
+  | "rh"
+  | "temp"
+  | "ahRate"
+  | "vpd"
+  | "normRate";
 
 export const METRIC_LABELS: Record<MetricKey, string> = {
   absHumidity: "Absolute Humidity (g/m³)",
   rh: "Relative Humidity (%RH)",
   temp: "Temperature (°C)",
   ahRate: "AH Rate dAH/dt (g/m³/min)",
+  vpd: "Vapor Pressure Deficit (kPa)",
+  normRate: "Normalized Evaporation Rate ((g/m³/min)/kPa)",
 };

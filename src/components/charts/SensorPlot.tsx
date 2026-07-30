@@ -19,7 +19,9 @@
  *   - absHumidity  Absolute Humidity (g/m³)  — computed, not logged directly
  *   - rh           Relative Humidity (%RH)   — from CSV measure type containing "RH"
  *   - temp         Temperature (°C)          — non-RH rows in the CSV
- *   - ahRate       AH Rate dAH/dt (g/m³/min) — finite difference of absHumidity vs time
+ *   - ahRate       AH Rate dAH/dt (g/m³/min) — ΔAH / Δt (backward difference)
+ *   - vpd          Vapor Pressure Deficit (kPa) — Psat − Pa
+ *   - normRate     Norm. Evaporation Rate    — AH_rate / VPD
  *
  * X-AXIS MODES:
  *   - calendar ("Clock time"):  ISO timestamps; Plotly date axis, tick %H:%M
@@ -44,6 +46,11 @@ import type {
   Shape,
 } from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
+import {
+  ahRateSeries,
+  normRateSeries,
+  vpdSeries,
+} from "@/lib/derived-metrics";
 import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
 import {
   bookmarkPlotX,
@@ -98,6 +105,8 @@ const METRIC_SHORT: Record<MetricKey, { short: string; unit: string }> = {
   rh: { short: "RH", unit: "%RH" },
   temp: { short: "Temp", unit: "°C" },
   ahRate: { short: "dAH/dt", unit: "g/m³/min" },
+  vpd: { short: "VPD", unit: "kPa" },
+  normRate: { short: "Norm Rate", unit: "(g/m³/min)/kPa" },
 };
 
 /** Stable fingerprint of sensor points (ignores bookmark/notes edits). */
@@ -129,60 +138,19 @@ function metricValue(p: TrialSeries["points"][0], key: MetricKey): number {
   if (key === "absHumidity") return p.absHumidity;
   if (key === "rh") return p.rh;
   if (key === "temp") return p.temp;
+  if (key === "vpd") return Number.NaN; // derived via metricSeries
   return Number.NaN;
 }
 
-/**
- * First derivative of absolute humidity vs time (g/m³ per minute).
- * Centered differences interior; one-sided at ends. Breaks across large gaps.
- */
-function ahRateSeries(
-  points: TrialSeries["points"],
-  maxGapMs: number,
-): number[] {
-  const n = points.length;
-  const out = new Array<number>(n).fill(Number.NaN);
-  if (n < 2) return out;
-
-  const times = points.map((p) => Date.parse(p.time));
-  const ahs = points.map((p) => p.absHumidity);
-
-  for (let i = 0; i < n; i++) {
-    let i0: number;
-    let i1: number;
-    if (i === 0) {
-      i0 = 0;
-      i1 = 1;
-    } else if (i === n - 1) {
-      i0 = n - 2;
-      i1 = n - 1;
-    } else {
-      i0 = i - 1;
-      i1 = i + 1;
-    }
-
-    const t0 = times[i0];
-    const t1 = times[i1];
-    if (!Number.isFinite(t0) || !Number.isFinite(t1)) continue;
-    const dtMs = t1 - t0;
-    const spanSteps = i1 - i0;
-    const maxAllowed = Number.isFinite(maxGapMs)
-      ? maxGapMs * Math.max(1, spanSteps)
-      : Infinity;
-    if (dtMs <= 0 || dtMs > maxAllowed) continue;
-
-    out[i] = ((ahs[i1] - ahs[i0]) / dtMs) * 60_000;
-  }
-  return out;
-}
-
-/** Y values for a metric across a point list (handles derived ahRate). */
+/** Y values for a metric across a point list (handles derived rates / VPD). */
 function metricSeries(
   points: TrialSeries["points"],
   key: MetricKey,
   maxGapMs = Infinity,
 ): number[] {
   if (key === "ahRate") return ahRateSeries(points, maxGapMs);
+  if (key === "vpd") return vpdSeries(points);
+  if (key === "normRate") return normRateSeries(points, maxGapMs);
   return points.map((p) => metricValue(p, key));
 }
 
@@ -742,7 +710,7 @@ export function SensorPlot({
         },
         domain: [Math.max(0, bottom), top - 0.02],
         gridcolor: DARK_THEME.gridMajor,
-        zeroline: metric === "ahRate",
+        zeroline: metric === "ahRate" || metric === "normRate",
         zerolinecolor: DARK_THEME.subtext,
         tickfont: { color: DARK_THEME.subtext, size: 10 },
         automargin: true,
