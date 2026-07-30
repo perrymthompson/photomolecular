@@ -31,9 +31,6 @@ export const AH_RATE_SMOOTH_WINDOW_MS = 60_000;
 /** Graph B: hard Y bounds for normalized evaporation rate. */
 export const NORM_RATE_Y_RANGE: [number, number] = [-20, 100];
 
-/** Graph A: fixed VPD X-axis window (kPa). */
-export const VPD_X_RANGE: [number, number] = [0, 2];
-
 export type AhRateOptions = {
   /**
    * Session / exposure start as epoch ms. Elapsed time is measured from this

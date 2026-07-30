@@ -1,9 +1,9 @@
 "use client";
 
 /**
- * Evaporation Rate vs VPD — scatter / line of AH_rate (y) against VPD (x).
- * Points follow chronological order within each trial (line connects time).
- * X-axis fixed to 0–2 kPa; Y-axis uses robust percentiles to ignore spikes.
+ * Evaporation Rate vs VPD — scatter of AH_rate (y) against VPD (x).
+ * Markers only (no time-connecting lines); per-trial linear trendlines.
+ * X/Y axes auto-scale from the plotted data (robust percentiles on Y).
  */
 
 import { useEffect, useMemo, useState, type ComponentType } from "react";
@@ -13,7 +13,6 @@ import {
   AH_RATE_MIN_FOR_EVAP_PLOTS,
   ahRateSeries,
   percentileRange,
-  VPD_X_RANGE,
   vpdSeries,
 } from "@/lib/derived-metrics";
 import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
@@ -42,6 +41,58 @@ function formatClockUtc(iso: string): string {
   const mm = String(d.getUTCMinutes()).padStart(2, "0");
   const ss = String(d.getUTCSeconds()).padStart(2, "0");
   return `${hh}:${mm}:${ss}`;
+}
+
+/** Ordinary least-squares line y = m x + b over finite (x, y) pairs. */
+function linearFit(
+  xs: number[],
+  ys: number[],
+): { x0: number; x1: number; y0: number; y1: number } | null {
+  let n = 0;
+  let sumX = 0;
+  let sumY = 0;
+  let sumXX = 0;
+  let sumXY = 0;
+  let xMin = Infinity;
+  let xMax = -Infinity;
+
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i];
+    const y = ys[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y)) continue;
+    n += 1;
+    sumX += x;
+    sumY += y;
+    sumXX += x * x;
+    sumXY += x * y;
+    if (x < xMin) xMin = x;
+    if (x > xMax) xMax = x;
+  }
+
+  if (n < 2 || !(xMax > xMin)) return null;
+  const denom = n * sumXX - sumX * sumX;
+  if (Math.abs(denom) < 1e-18) return null;
+
+  const m = (n * sumXY - sumX * sumY) / denom;
+  const b = (sumY - m * sumX) / n;
+  return {
+    x0: xMin,
+    x1: xMax,
+    y0: m * xMin + b,
+    y1: m * xMax + b,
+  };
+}
+
+function paddedAxisRange(vals: number[]): [number, number] {
+  if (vals.length === 0) return [0, 1];
+  let lo = vals[0];
+  let hi = vals[0];
+  for (const v of vals) {
+    if (v < lo) lo = v;
+    if (v > hi) hi = v;
+  }
+  const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.06 || 0.01;
+  return [lo - pad, hi + pad];
 }
 
 export function EvapRateVsVpdPlot({
@@ -83,10 +134,10 @@ export function EvapRateVsVpdPlot({
     [series],
   );
 
-  const { traces, yValsInWindow } = useMemo(() => {
+  const { traces, xVals, yVals } = useMemo(() => {
     const tracesOut: Data[] = [];
-    const yInWindow: number[] = [];
-    const [vpdLo, vpdHi] = VPD_X_RANGE;
+    const allX: number[] = [];
+    const allY: number[] = [];
 
     for (const s of series) {
       const color = colors[s.meta.id] ?? "#888";
@@ -111,31 +162,19 @@ export function EvapRateVsVpdPlot({
       const vpds = vpdSeries(pts);
 
       const x: number[] = [];
-      const y: Array<number | null> = [];
+      const y: number[] = [];
       const text: string[] = [];
-      let needGap = false;
 
       for (let i = 0; i < pts.length; i++) {
         const vpd = vpds[i];
         const rate = rates[i];
-        if (
-          !Number.isFinite(vpd) ||
-          !Number.isFinite(rate) ||
-          vpd < vpdLo ||
-          vpd > vpdHi
-        ) {
-          needGap = x.length > 0;
+        if (!Number.isFinite(vpd) || !Number.isFinite(rate) || vpd <= 0) {
           continue;
-        }
-        if (needGap) {
-          x.push(vpd);
-          y.push(null);
-          text.push("");
-          needGap = false;
         }
         x.push(vpd);
         y.push(rate);
-        yInWindow.push(rate);
+        allX.push(vpd);
+        allY.push(rate);
         text.push(
           [
             `<span style="color:${color}">●</span> ${name}`,
@@ -150,20 +189,34 @@ export function EvapRateVsVpdPlot({
 
       tracesOut.push({
         type: "scatter",
-        mode: "lines+markers",
+        mode: "markers",
         name,
         legendgroup: s.meta.id,
+        showlegend: true,
         x,
         y,
         text,
         hovertemplate: "%{text}<extra></extra>",
-        connectgaps: false,
-        marker: { size: 5, color, opacity: 0.75 },
-        line: { color, width: 1.4 },
+        marker: { size: 4, color, opacity: 0.4 },
       });
+
+      const fit = linearFit(x, y);
+      if (fit) {
+        tracesOut.push({
+          type: "scatter",
+          mode: "lines",
+          name: `${name} · fit`,
+          legendgroup: s.meta.id,
+          showlegend: true,
+          x: [fit.x0, fit.x1],
+          y: [fit.y0, fit.y1],
+          line: { color, width: 2.6 },
+          hoverinfo: "skip",
+        });
+      }
     }
 
-    return { traces: tracesOut, yValsInWindow: yInWindow };
+    return { traces: tracesOut, xVals: allX, yVals: allY };
   }, [series, colors, fullResolution]);
 
   const layout = useMemo((): Partial<Layout> => {
@@ -186,8 +239,7 @@ export function EvapRateVsVpdPlot({
       tickfont: { color: DARK_THEME.subtext, size: 10 },
       automargin: true,
       autorange: false,
-      // 2–98th percentile so rare spikes do not crush steady-state detail
-      range: percentileRange(yValsInWindow, 2, 98),
+      range: percentileRange(yVals, 2, 98),
     };
 
     return {
@@ -219,12 +271,12 @@ export function EvapRateVsVpdPlot({
         zerolinecolor: DARK_THEME.subtext,
         tickfont: { color: DARK_THEME.subtext, size: 10 },
         autorange: false,
-        range: [...VPD_X_RANGE],
+        range: paddedAxisRange(xVals),
       },
       yaxis: yAxis,
       height,
     };
-  }, [series, yValsInWindow, height]);
+  }, [series, xVals, yVals, height]);
 
   if (series.length === 0) {
     return (
