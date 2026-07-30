@@ -2,8 +2,10 @@
 
 /**
  * Evaporation Rate vs VPD — scatter of AH_rate (y) against VPD (x).
- * Markers only (no time-connecting lines); per-trial linear trendlines.
- * X/Y axes auto-scale from the plotted data (robust percentiles on Y).
+ * Markers only; per-series (or pooled Light/Dark) linear trendlines.
+ *
+ * Pool mode: merge post-turnaround points from many CSVs into two clouds per
+ * chamber channel (ch1/ch2) — Light vs Dark — using plotLabel.
  */
 
 import { useEffect, useMemo, useState, type ComponentType } from "react";
@@ -26,6 +28,24 @@ type Props = {
   height?: number;
   plotRevision?: number;
   fullResolution?: boolean;
+  /**
+   * Merge selected trials by chamber (ch1/ch2) + Light/Dark plotLabel into
+   * pooled clouds (one color + fit each), instead of one series per CSV.
+   */
+  poolLightDark?: boolean;
+};
+
+type LightCondition = "light" | "dark";
+
+type ScatterPoint = {
+  vpd: number;
+  rate: number;
+  text: string;
+};
+
+const CONDITION_COLORS: Record<LightCondition, string> = {
+  light: "#E0A04A",
+  dark: "#5B8DEF",
 };
 
 function legendName(s: TrialSeries): string {
@@ -34,6 +54,17 @@ function legendName(s: TrialSeries): string {
   return plotLabel
     ? `${s.meta.label} · ${short} · ${plotLabel}`
     : `${s.meta.label} · ${short}`;
+}
+
+/** Map plot labels like "Dark" / "Light, 45°" → light | dark. */
+export function lightConditionFromPlotLabel(
+  plotLabel: string | null | undefined,
+): LightCondition | null {
+  const s = (plotLabel ?? "").trim().toLowerCase();
+  if (!s) return null;
+  if (s === "dark" || s.startsWith("dark")) return "dark";
+  if (s.startsWith("light")) return "light";
+  return null;
 }
 
 function formatClockUtc(iso: string): string {
@@ -96,11 +127,109 @@ function paddedAxisRange(vals: number[]): [number, number] {
   return [lo - pad, hi + pad];
 }
 
+function collectPostTurnaroundPoints(
+  s: TrialSeries,
+  fullResolution: boolean,
+  color: string,
+): ScatterPoint[] {
+  const name = legendName(s);
+  const keep = plotPointIndices(
+    s.points.length,
+    fullResolution,
+    PLOT_MAX_POINTS,
+  );
+  const pts = keep.map((i) => s.points[i]);
+  const startIso = sessionStartIso(
+    s.points[0]?.time,
+    s.meta.sessionStartTime,
+  );
+  const sessionStartMs = startIso ? Date.parse(startIso) : null;
+  const originMs = Number.isFinite(sessionStartMs) ? sessionStartMs : null;
+  const trough = detectAhTurnaround(s.points, originMs);
+  const rateOpts = {
+    sessionStartMs: originMs,
+    readyAfterMs: trough?.troughMs ?? null,
+    minAhRate: AH_RATE_MIN_FOR_EVAP_PLOTS,
+  };
+  const rates = ahRateSeries(
+    pts,
+    fullResolution ? 10_000 : Infinity,
+    rateOpts,
+  );
+  const vpds = vpdSeries(pts, rateOpts);
+
+  const out: ScatterPoint[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    const vpd = vpds[i];
+    const rate = rates[i];
+    if (!Number.isFinite(vpd) || !Number.isFinite(rate) || vpd <= 0) continue;
+    out.push({
+      vpd,
+      rate,
+      text: [
+        `<span style="color:${color}">●</span> ${name}`,
+        `VPD ${vpd.toFixed(4)} kPa`,
+        `dAH/dt ${rate.toFixed(4)} g/m³/min`,
+        formatClockUtc(pts[i].time),
+      ].join("<br>"),
+    });
+  }
+  return out;
+}
+
+function pushScatterAndFit(
+  tracesOut: Data[],
+  name: string,
+  group: string,
+  color: string,
+  points: ScatterPoint[],
+  allX: number[],
+  allY: number[],
+) {
+  if (points.length === 0) return;
+  const x = points.map((p) => p.vpd);
+  const y = points.map((p) => p.rate);
+  const text = points.map((p) => p.text);
+  for (const p of points) {
+    allX.push(p.vpd);
+    allY.push(p.rate);
+  }
+
+  tracesOut.push({
+    type: "scatter",
+    mode: "markers",
+    name,
+    legendgroup: group,
+    showlegend: true,
+    x,
+    y,
+    text,
+    hovertemplate: "%{text}<extra></extra>",
+    marker: { size: 4, color, opacity: 0.4 },
+  });
+
+  const fit = linearFit(x, y);
+  if (fit) {
+    tracesOut.push({
+      type: "scatter",
+      mode: "lines",
+      name: `${name} · fit`,
+      legendgroup: group,
+      showlegend: true,
+      x: [fit.x0, fit.x1],
+      y: [fit.y0, fit.y1],
+      line: { color, width: 2.6 },
+      hoverinfo: "skip",
+    });
+  }
+}
+
 export function EvapRateVsVpdPlot({
   series,
   height = 520,
   plotRevision = 0,
   fullResolution = false,
+  poolLightDark = false,
 }: Props) {
   const [PlotComponent, setPlotComponent] = useState<ComponentType<{
     data: Data[];
@@ -135,96 +264,87 @@ export function EvapRateVsVpdPlot({
     [series],
   );
 
-  const { traces, xVals, yVals } = useMemo(() => {
+  const { traces, xVals, yVals, skippedUnlabeled } = useMemo(() => {
     const tracesOut: Data[] = [];
     const allX: number[] = [];
     const allY: number[] = [];
+    let skippedUnlabeled = 0;
 
-    for (const s of series) {
-      const color = colors[s.meta.id] ?? "#888";
-      const name = legendName(s);
-      const keep = plotPointIndices(
-        s.points.length,
-        fullResolution,
-        PLOT_MAX_POINTS,
-      );
-      const pts = keep.map((i) => s.points[i]);
-      const startIso = sessionStartIso(
-        s.points[0]?.time,
-        s.meta.sessionStartTime,
-      );
-      const sessionStartMs = startIso ? Date.parse(startIso) : null;
-      const originMs = Number.isFinite(sessionStartMs) ? sessionStartMs : null;
-      const trough = detectAhTurnaround(s.points, originMs);
-      const rateOpts = {
-        sessionStartMs: originMs,
-        readyAfterMs: trough?.troughMs ?? null,
-        minAhRate: AH_RATE_MIN_FOR_EVAP_PLOTS,
-      };
-      const rates = ahRateSeries(
-        pts,
-        fullResolution ? 10_000 : Infinity,
-        rateOpts,
-      );
-      const vpds = vpdSeries(pts, rateOpts);
-
-      const x: number[] = [];
-      const y: number[] = [];
-      const text: string[] = [];
-
-      for (let i = 0; i < pts.length; i++) {
-        const vpd = vpds[i];
-        const rate = rates[i];
-        if (!Number.isFinite(vpd) || !Number.isFinite(rate) || vpd <= 0) {
-          continue;
-        }
-        x.push(vpd);
-        y.push(rate);
-        allX.push(vpd);
-        allY.push(rate);
-        text.push(
-          [
-            `<span style="color:${color}">●</span> ${name}`,
-            `VPD ${vpd.toFixed(4)} kPa`,
-            `dAH/dt ${rate.toFixed(4)} g/m³/min`,
-            formatClockUtc(pts[i].time),
-          ].join("<br>"),
+    if (!poolLightDark) {
+      for (const s of series) {
+        const color = colors[s.meta.id] ?? "#888";
+        const pts = collectPostTurnaroundPoints(s, fullResolution, color);
+        pushScatterAndFit(
+          tracesOut,
+          legendName(s),
+          s.meta.id,
+          color,
+          pts,
+          allX,
+          allY,
         );
       }
+      return { traces: tracesOut, xVals: allX, yVals: allY, skippedUnlabeled: 0 };
+    }
 
-      if (x.length === 0) continue;
+    // chamber (ch1/ch2) → condition → pooled points + trial count
+    type Bucket = { points: ScatterPoint[]; trialCount: number };
+    const byChamber = new Map<
+      string,
+      { light?: Bucket; dark?: Bucket }
+    >();
 
-      tracesOut.push({
-        type: "scatter",
-        mode: "markers",
-        name,
-        legendgroup: s.meta.id,
-        showlegend: true,
-        x,
-        y,
-        text,
-        hovertemplate: "%{text}<extra></extra>",
-        marker: { size: 4, color, opacity: 0.4 },
-      });
+    for (const s of series) {
+      const condition = lightConditionFromPlotLabel(s.meta.plotLabel);
+      if (!condition) {
+        skippedUnlabeled += 1;
+        continue;
+      }
+      const chamber = s.meta.label?.trim() || "unknown";
+      const color = CONDITION_COLORS[condition];
+      const pts = collectPostTurnaroundPoints(s, fullResolution, color);
+      if (pts.length === 0) continue;
 
-      const fit = linearFit(x, y);
-      if (fit) {
-        tracesOut.push({
-          type: "scatter",
-          mode: "lines",
-          name: `${name} · fit`,
-          legendgroup: s.meta.id,
-          showlegend: true,
-          x: [fit.x0, fit.x1],
-          y: [fit.y0, fit.y1],
-          line: { color, width: 2.6 },
-          hoverinfo: "skip",
-        });
+      let row = byChamber.get(chamber);
+      if (!row) {
+        row = {};
+        byChamber.set(chamber, row);
+      }
+      const existing = row[condition];
+      if (!existing) {
+        row[condition] = { points: [...pts], trialCount: 1 };
+      } else {
+        existing.points.push(...pts);
+        existing.trialCount += 1;
       }
     }
 
-    return { traces: tracesOut, xVals: allX, yVals: allY };
-  }, [series, colors, fullResolution]);
+    const chambers = [...byChamber.keys()].sort((a, b) =>
+      a.localeCompare(b, undefined, { sensitivity: "base" }),
+    );
+
+    for (const chamber of chambers) {
+      const row = byChamber.get(chamber)!;
+      for (const condition of ["light", "dark"] as const) {
+        const bucket = row[condition];
+        if (!bucket?.points.length) continue;
+        const label =
+          condition === "light" ? "Light (on)" : "Dark (off)";
+        const name = `${chamber} · ${label} · ${bucket.trialCount} trial${bucket.trialCount === 1 ? "" : "s"}`;
+        pushScatterAndFit(
+          tracesOut,
+          name,
+          `${chamber}|${condition}`,
+          CONDITION_COLORS[condition],
+          bucket.points,
+          allX,
+          allY,
+        );
+      }
+    }
+
+    return { traces: tracesOut, xVals: allX, yVals: allY, skippedUnlabeled };
+  }, [series, colors, fullResolution, poolLightDark]);
 
   const layout = useMemo((): Partial<Layout> => {
     const dateLabels = uniqueDateLabels(series.map((s) => s.meta));
@@ -234,7 +354,9 @@ export function EvapRateVsVpdPlot({
         : dateLabels.length === 1
           ? dateLabels[0]
           : dateLabels.join("   |   ");
-    const titleBase = "Evaporation Rate vs Vapor Pressure Deficit";
+    const titleBase = poolLightDark
+      ? "Evaporation Rate vs VPD — pooled Light vs Dark by chamber"
+      : "Evaporation Rate vs Vapor Pressure Deficit";
     const yAxis: Partial<LayoutAxis> = {
       title: {
         text: "AH Rate dAH/dt (g/m³/min)",
@@ -261,13 +383,13 @@ export function EvapRateVsVpdPlot({
       font: { color: DARK_THEME.text },
       showlegend: true,
       legend: {
-        title: { text: "Trial" },
+        title: { text: poolLightDark ? "Condition" : "Trial" },
         bgcolor: DARK_THEME.bg,
         font: { color: DARK_THEME.text },
       },
       margin: { t: 56, r: 24, b: 56, l: 72 },
       hovermode: "closest",
-      uirevision: "evap-vs-vpd",
+      uirevision: poolLightDark ? "evap-vs-vpd-pool" : "evap-vs-vpd",
       xaxis: {
         title: {
           text: "Vapor Pressure Deficit (kPa)",
@@ -283,7 +405,7 @@ export function EvapRateVsVpdPlot({
       yaxis: yAxis,
       height,
     };
-  }, [series, xVals, yVals, height]);
+  }, [series, xVals, yVals, height, poolLightDark]);
 
   if (series.length === 0) {
     return (
@@ -301,28 +423,38 @@ export function EvapRateVsVpdPlot({
     );
   }
 
-  const mountKey = `${series.map((s) => s.meta.id).join(",")}|ahRateVsVpd|${fullResolution}`;
+  const mountKey = `${series.map((s) => s.meta.id).join(",")}|ahRateVsVpd|${fullResolution}|${poolLightDark ? "pool" : "trial"}`;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
-      <PlotComponent
-        key={mountKey}
-        data={traces}
-        layout={layout}
-        revision={plotRevision}
-        config={{
-          responsive: true,
-          displaylogo: false,
-          modeBarButtonsToRemove: ["lasso2d", "select2d"],
-          toImageButtonOptions: {
-            format: "png",
-            filename: "evaporation_rate_vs_vpd",
-            scale: 2,
-          },
-        }}
-        style={{ width: "100%", height }}
-        useResizeHandler
-      />
+    <div className="space-y-2">
+      {poolLightDark && skippedUnlabeled > 0 ? (
+        <p className="text-xs text-[#8a8a8d]">
+          Skipped {skippedUnlabeled} selected trial
+          {skippedUnlabeled === 1 ? "" : "s"} without a Light/Dark plot label.
+        </p>
+      ) : null}
+      <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
+        <PlotComponent
+          key={mountKey}
+          data={traces}
+          layout={layout}
+          revision={plotRevision}
+          config={{
+            responsive: true,
+            displaylogo: false,
+            modeBarButtonsToRemove: ["lasso2d", "select2d"],
+            toImageButtonOptions: {
+              format: "png",
+              filename: poolLightDark
+                ? "evaporation_rate_vs_vpd_pooled"
+                : "evaporation_rate_vs_vpd",
+              scale: 2,
+            },
+          }}
+          style={{ width: "100%", height }}
+          useResizeHandler
+        />
+      </div>
     </div>
   );
 }

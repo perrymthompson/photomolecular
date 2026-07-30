@@ -42,6 +42,7 @@ type PersistedPlotWorkspaceState = {
   showSmooth?: boolean;
   showBookmarks?: boolean;
   fullResolution?: boolean;
+  poolLightDark?: boolean;
   modeTouched?: boolean;
 };
 
@@ -111,6 +112,7 @@ export function PlotWorkspace() {
   const [showSmooth, setShowSmooth] = useState(true);
   const [showBookmarks, setShowBookmarks] = useState(true);
   const [fullResolution, setFullResolution] = useState(false);
+  const [poolLightDark, setPoolLightDark] = useState(false);
   const [loading, setLoading] = useState(false);
   const [plotBusy, setPlotBusy] = useState(false);
   const [plotRevision, setPlotRevision] = useState(0);
@@ -235,6 +237,9 @@ export function PlotWorkspace() {
       if (typeof parsed.fullResolution === "boolean") {
         setFullResolution(parsed.fullResolution);
       }
+      if (typeof parsed.poolLightDark === "boolean") {
+        setPoolLightDark(parsed.poolLightDark);
+      }
       if (typeof parsed.modeTouched === "boolean") {
         setModeTouched(parsed.modeTouched);
       } else if (parsed.mode) {
@@ -295,13 +300,14 @@ export function PlotWorkspace() {
       showSmooth,
       showBookmarks,
       fullResolution,
+      poolLightDark,
       modeTouched,
     };
     window.sessionStorage.setItem(
       PLOT_WORKSPACE_STORAGE_KEY,
       JSON.stringify(next),
     );
-  }, [selectedIds, mode, view, showSmooth, showBookmarks, fullResolution, modeTouched]);
+  }, [selectedIds, mode, view, showSmooth, showBookmarks, fullResolution, poolLightDark, modeTouched]);
 
   const loadSeries = useCallback(async (ids: string[]) => {
     if (!ids.length) {
@@ -398,6 +404,11 @@ export function PlotWorkspace() {
 
   const setFullResolutionAndRefresh = (next: boolean) => {
     setFullResolution(next);
+    bumpPlot();
+  };
+
+  const setPoolLightDarkAndRefresh = (next: boolean) => {
+    setPoolLightDark(next);
     bumpPlot();
   };
 
@@ -540,6 +551,16 @@ export function PlotWorkspace() {
           />
           ) : null}
 
+          {isScatterView ? (
+          <ToggleGroup
+            labelOn="Pool Light/Dark"
+            labelOff="Per trial"
+            on={poolLightDark}
+            onChange={setPoolLightDarkAndRefresh}
+            title="Pool post-turnaround points by chamber (ch1/ch2) and Light vs Dark plot labels into two clouds with trendlines"
+          />
+          ) : null}
+
           <ToggleGroup
             labelOn="Full res"
             labelOff="Sampled"
@@ -583,6 +604,7 @@ export function PlotWorkspace() {
                     height={plotHeight}
                     plotRevision={plotRevision}
                     fullResolution={fullResolution}
+                    poolLightDark={poolLightDark}
                   />
                 ) : (
                   <SensorPlot
