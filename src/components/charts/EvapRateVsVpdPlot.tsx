@@ -12,6 +12,7 @@ import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import {
   AH_RATE_MIN_FOR_EVAP_PLOTS,
   ahRateSeries,
+  detectAhTurnaround,
   percentileRange,
   vpdSeries,
 } from "@/lib/derived-metrics";
@@ -153,13 +154,19 @@ export function EvapRateVsVpdPlot({
         s.meta.sessionStartTime,
       );
       const sessionStartMs = startIso ? Date.parse(startIso) : null;
-      const rates = ahRateSeries(pts, fullResolution ? 10_000 : Infinity, {
-        sessionStartMs: Number.isFinite(sessionStartMs)
-          ? sessionStartMs
-          : null,
+      const originMs = Number.isFinite(sessionStartMs) ? sessionStartMs : null;
+      const trough = detectAhTurnaround(s.points, originMs);
+      const rateOpts = {
+        sessionStartMs: originMs,
+        readyAfterMs: trough?.troughMs ?? null,
         minAhRate: AH_RATE_MIN_FOR_EVAP_PLOTS,
-      });
-      const vpds = vpdSeries(pts);
+      };
+      const rates = ahRateSeries(
+        pts,
+        fullResolution ? 10_000 : Infinity,
+        rateOpts,
+      );
+      const vpds = vpdSeries(pts, rateOpts);
 
       const x: number[] = [];
       const y: number[] = [];

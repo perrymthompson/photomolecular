@@ -20,10 +20,10 @@
  *   - rh           Relative Humidity (%RH)   — from CSV measure type containing "RH"
  *   - temp         Temperature (°C)          — non-RH rows in the CSV
  *   - ahRate       AH Rate dAH/dt (g/m³/min) — ΔAH / Δt + 1-min rolling mean
- *                  (t ≥ STABILIZATION_TIME_MINUTES from session start)
- *   - vpd          Vapor Pressure Deficit (kPa) — Psat − Pa
+ *                  (t ≥ detected AH trough / turnaround)
+ *   - vpd          Vapor Pressure Deficit (kPa) — Psat − Pa (post-trough)
  *   - normRate     Norm. Evaporation Rate    — AH_rate / VPD (VPD > 0.05;
- *                  AH_rate ≥ −0.05; post-stabilization only)
+ *                  AH_rate ≥ −0.05; post-trough only)
  *
  * X-AXIS MODES:
  *   - calendar ("Clock time"):  ISO timestamps; Plotly date axis, tick %H:%M
@@ -51,6 +51,7 @@ import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import {
   ahRateSeries,
   type AhRateOptions,
+  detectAhTurnaround,
   NORM_RATE_Y_RANGE,
   normRateSeries,
   vpdSeries,
@@ -154,7 +155,7 @@ function metricSeries(
   rateOptions: AhRateOptions = {},
 ): number[] {
   if (key === "ahRate") return ahRateSeries(points, maxGapMs, rateOptions);
-  if (key === "vpd") return vpdSeries(points);
+  if (key === "vpd") return vpdSeries(points, rateOptions);
   if (key === "normRate") return normRateSeries(points, maxGapMs, rateOptions);
   return points.map((p) => metricValue(p, key));
 }
@@ -580,8 +581,11 @@ export function SensorPlot({
         s.points[0]?.time,
         s.meta.sessionStartTime,
       );
+      const sessionStartMs = sessionStartMsForSeries(s);
+      const trough = detectAhTurnaround(s.points, sessionStartMs);
       const rateOptions: AhRateOptions = {
-        sessionStartMs: sessionStartMsForSeries(s),
+        sessionStartMs,
+        readyAfterMs: trough?.troughMs ?? null,
       };
 
       // Cap points before smoothing / hover unless full resolution is on.
@@ -595,6 +599,68 @@ export function SensorPlot({
         ? splitContinuousPointRuns(pts, FULL_RES_GAP_MS)
         : [pts];
       const rateGapMs = fullResolution ? FULL_RES_GAP_MS : Infinity;
+
+      // AH trough marker on Absolute Humidity panels (verify turnaround detection).
+      const ahMetricIndex = metrics.indexOf("absHumidity");
+      if (trough && ahMetricIndex >= 0) {
+        const axisY =
+          ahMetricIndex === 0 ? "y" : (`y${ahMetricIndex + 1}` as const);
+        const troughX =
+          mode === "aligned"
+            ? startIso
+              ? (trough.troughMs - Date.parse(startIso)) / 60000
+              : null
+            : trough.troughIso;
+        if (troughX !== null) {
+          const clock = formatClockUtc(new Date(trough.troughMs));
+          const hoverText = [
+            `<span style="color:${color}">▼</span> ${name}`,
+            "AH trough / turnaround (t_start)",
+            `Elapsed ${trough.elapsedMinutes.toFixed(2)} min`,
+            `Clock ${clock}`,
+            `AH smoothed ${trough.ahSmoothed.toFixed(3)} g/m³`,
+            `AH raw ${trough.ahRaw.toFixed(3)} g/m³`,
+          ].join("<br>");
+
+          shapes.push({
+            type: "line",
+            xref: "x",
+            yref: "paper",
+            x0: troughX,
+            x1: troughX,
+            y0: 0,
+            y1: 1,
+            line: { color, width: 1.5, dash: "dot" },
+            opacity: 0.85,
+          });
+
+          traces.push({
+            type: "scatter",
+            mode: "markers",
+            name: `${name} AH trough`,
+            legendgroup: group,
+            showlegend: false,
+            x: [troughX],
+            y: [trough.ahRaw],
+            yaxis: axisY,
+            cliponaxis: false,
+            marker: {
+              symbol: "triangle-down",
+              size: 11,
+              color,
+              line: { width: 1, color: "#ffffff" },
+            },
+            text: [hoverText],
+            hovertemplate: "%{text}<extra></extra>",
+          });
+          meta.push({
+            trialId: s.meta.id,
+            kind: "bookmark",
+            color,
+            metric: "absHumidity",
+          });
+        }
+      }
 
       metrics.forEach((metric, mi) => {
         const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
@@ -778,7 +844,14 @@ export function SensorPlot({
           s.points,
           metrics[0],
           fullResolution ? FULL_RES_GAP_MS : Infinity,
-          { sessionStartMs: sessionStartMsForSeries(s) },
+          (() => {
+            const sessionStartMs = sessionStartMsForSeries(s);
+            const trough = detectAhTurnaround(s.points, sessionStartMs);
+            return {
+              sessionStartMs,
+              readyAfterMs: trough?.troughMs ?? null,
+            };
+          })(),
         );
         for (const v of vals) {
           if (!Number.isFinite(v)) continue;
@@ -857,9 +930,14 @@ export function SensorPlot({
         const x = bookmarkPlotX(b, s.points[0]?.time, mode, startIso);
         if (x === null) continue;
 
-        const y = metricValueAtBookmark(s.points, b, metrics[0], {
-          sessionStartMs: sessionStartMsForSeries(s),
-        });
+        const y = metricValueAtBookmark(s.points, b, metrics[0], (() => {
+          const sessionStartMs = sessionStartMsForSeries(s);
+          const trough = detectAhTurnaround(s.points, sessionStartMs);
+          return {
+            sessionStartMs,
+            readyAfterMs: trough?.troughMs ?? null,
+          };
+        })());
         if (y === null) continue;
         bx.push(x);
         by.push(y);
