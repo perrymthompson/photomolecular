@@ -8,6 +8,7 @@ import {
   useMemo,
   useRef,
   useState,
+  type PointerEvent as ReactPointerEvent,
 } from "react";
 import {
   PlotBookmarkAdd,
@@ -19,6 +20,10 @@ import { selectionSpansMultipleRuns, sortTrials } from "@/lib/trial-sort";
 import type { MetricKey, PlotMode, TrialMeta, TrialSeries } from "@/types/trial";
 
 const PLOT_WORKSPACE_STORAGE_KEY = "plot-workspace-state-v1";
+const TRIALS_PANEL_SIZE_KEY = "plot-trials-panel-size-v1";
+const TRIALS_PANEL_DEFAULT = { width: 280, height: 360 };
+const TRIALS_PANEL_MIN = { width: 200, height: 200 };
+const TRIALS_PANEL_MAX = { width: 520, height: 900 };
 
 type PlotView = "combined" | "ah" | "rh" | "temp";
 
@@ -98,9 +103,94 @@ export function PlotWorkspace() {
   const [bookmarkPrefill, setBookmarkPrefill] = useState<BookmarkPrefill | null>(
     null,
   );
+  const [panelWidth, setPanelWidth] = useState(TRIALS_PANEL_DEFAULT.width);
+  const [panelHeight, setPanelHeight] = useState(TRIALS_PANEL_DEFAULT.height);
   const restoredSelectedIdsRef = useRef<string[] | null>(null);
   const storageReadyRef = useRef(false);
   const skipFirstPersistRef = useRef(true);
+  const dragRef = useRef<{
+    kind: "width" | "height" | "both";
+    startX: number;
+    startY: number;
+    startW: number;
+    startH: number;
+  } | null>(null);
+
+  useEffect(() => {
+    try {
+      const raw = window.localStorage.getItem(TRIALS_PANEL_SIZE_KEY);
+      if (!raw) return;
+      const parsed = JSON.parse(raw) as { width?: number; height?: number };
+      if (typeof parsed.width === "number") {
+        setPanelWidth(
+          Math.min(
+            TRIALS_PANEL_MAX.width,
+            Math.max(TRIALS_PANEL_MIN.width, parsed.width),
+          ),
+        );
+      }
+      if (typeof parsed.height === "number") {
+        setPanelHeight(
+          Math.min(
+            TRIALS_PANEL_MAX.height,
+            Math.max(TRIALS_PANEL_MIN.height, parsed.height),
+          ),
+        );
+      }
+    } catch {
+      // ignore corrupt size prefs
+    }
+  }, []);
+
+  useEffect(() => {
+    try {
+      window.localStorage.setItem(
+        TRIALS_PANEL_SIZE_KEY,
+        JSON.stringify({ width: panelWidth, height: panelHeight }),
+      );
+    } catch {
+      // ignore quota / private mode
+    }
+  }, [panelWidth, panelHeight]);
+
+  const startPanelDrag = (
+    kind: "width" | "height" | "both",
+    e: ReactPointerEvent,
+  ) => {
+    e.preventDefault();
+    dragRef.current = {
+      kind,
+      startX: e.clientX,
+      startY: e.clientY,
+      startW: panelWidth,
+      startH: panelHeight,
+    };
+    (e.currentTarget as HTMLElement).setPointerCapture(e.pointerId);
+  };
+
+  const onPanelDrag = (e: ReactPointerEvent) => {
+    const drag = dragRef.current;
+    if (!drag) return;
+    if (drag.kind === "width" || drag.kind === "both") {
+      const next = drag.startW + (e.clientX - drag.startX);
+      setPanelWidth(
+        Math.min(TRIALS_PANEL_MAX.width, Math.max(TRIALS_PANEL_MIN.width, next)),
+      );
+    }
+    if (drag.kind === "height" || drag.kind === "both") {
+      const next = drag.startH + (e.clientY - drag.startY);
+      setPanelHeight(
+        Math.min(
+          TRIALS_PANEL_MAX.height,
+          Math.max(TRIALS_PANEL_MIN.height, next),
+        ),
+      );
+    }
+  };
+
+  const endPanelDrag = () => {
+    dragRef.current = null;
+  };
 
   useEffect(() => {
     try {
@@ -295,17 +385,49 @@ export function PlotWorkspace() {
   const plotHeight = view !== "combined" ? 480 : 720;
 
   return (
-    <div className="mx-auto grid max-w-7xl items-stretch gap-6 px-4 py-6 lg:grid-cols-[260px_1fr]">
-      <aside className="flex min-h-0 flex-col self-stretch rounded-lg border border-[#3a3b3f] bg-[#16171a] p-3">
+    <div className="mx-auto flex max-w-7xl flex-col gap-6 px-4 py-6 lg:flex-row lg:items-start">
+      <aside
+        className="relative flex shrink-0 flex-col rounded-lg border border-[#3a3b3f] bg-[#16171a] p-3"
+        style={{ width: panelWidth, height: panelHeight }}
+      >
         <h2 className="mb-3 shrink-0 text-sm font-semibold text-white">Trials</h2>
         <TrialSelector
           trials={trials}
           selectedIds={selectedIds}
           onChange={setSelectedIds}
         />
+        <div
+          role="separator"
+          aria-orientation="vertical"
+          title="Drag to resize width"
+          className="absolute inset-y-2 -right-1.5 w-3 cursor-col-resize"
+          onPointerDown={(e) => startPanelDrag("width", e)}
+          onPointerMove={onPanelDrag}
+          onPointerUp={endPanelDrag}
+          onPointerCancel={endPanelDrag}
+        />
+        <div
+          role="separator"
+          aria-orientation="horizontal"
+          title="Drag to resize height"
+          className="absolute inset-x-2 -bottom-1.5 h-3 cursor-row-resize"
+          onPointerDown={(e) => startPanelDrag("height", e)}
+          onPointerMove={onPanelDrag}
+          onPointerUp={endPanelDrag}
+          onPointerCancel={endPanelDrag}
+        />
+        <div
+          role="separator"
+          title="Drag to resize"
+          className="absolute -bottom-1.5 -right-1.5 h-4 w-4 cursor-nwse-resize"
+          onPointerDown={(e) => startPanelDrag("both", e)}
+          onPointerMove={onPanelDrag}
+          onPointerUp={endPanelDrag}
+          onPointerCancel={endPanelDrag}
+        />
       </aside>
 
-      <section className="space-y-4">
+      <section className="min-w-0 flex-1 space-y-4">
         <div className="flex flex-wrap items-center gap-3">
           <div className="flex rounded border border-[#3a3b3f] p-0.5">
             {(
