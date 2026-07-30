@@ -522,55 +522,62 @@ export function PlotWorkspace() {
           </p>
         ) : null}
 
-        <div
-          className={`relative ${loading || plotBusy ? "pointer-events-none" : ""}`}
-        >
-          {(loading || plotBusy) && visibleSeries.length > 0 ? (
-            <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-[#1e1f22]/70 backdrop-blur-[1px]">
-              <span className="flex items-center gap-2 text-sm text-[#e8e8e8]">
-                <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#4C8FD1] border-t-transparent" />
-                Loading plot…
-              </span>
+        <div className="grid gap-4 2xl:grid-cols-[minmax(0,1fr)_360px]">
+          <div className="min-w-0 space-y-4">
+            <div
+              className={`relative ${loading || plotBusy ? "pointer-events-none" : ""}`}
+            >
+              {(loading || plotBusy) && visibleSeries.length > 0 ? (
+                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-[#1e1f22]/70 backdrop-blur-[1px]">
+                  <span className="flex items-center gap-2 text-sm text-[#e8e8e8]">
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#4C8FD1] border-t-transparent" />
+                    Loading plot…
+                  </span>
+                </div>
+              ) : null}
+
+              {visibleSeries.length > 0 ? (
+                <SensorPlot
+                  series={visibleSeries}
+                  mode={mode}
+                  metrics={metrics}
+                  height={plotHeight}
+                  plotRevision={plotRevision}
+                  showSmooth={showSmooth}
+                  showBookmarks={showBookmarks}
+                  fullResolution={fullResolution}
+                  onTimePick={({ trialId, time }) => {
+                    setBookmarkPrefill({
+                      trialId,
+                      time,
+                      nonce: Date.now(),
+                    });
+                  }}
+                />
+              ) : (
+                <div className="flex h-[480px] items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
+                  {mode === "aligned" && series.length > 0
+                    ? "Selected trials need session start times (set them on Dashboard)."
+                    : "Select one or more trials to plot."}
+                </div>
+              )}
             </div>
-          ) : null}
+
+            {visibleSeries.length > 0 ? (
+              <PlotBookmarkAdd
+                series={visibleSeries}
+                prefill={bookmarkPrefill}
+                onSaved={handleTrialUpdated}
+              />
+            ) : null}
+          </div>
 
           {visibleSeries.length > 0 ? (
-            <SensorPlot
-              series={visibleSeries}
-              mode={mode}
-              metrics={metrics}
-              height={plotHeight}
-              plotRevision={plotRevision}
-              showSmooth={showSmooth}
-              showBookmarks={showBookmarks}
-              fullResolution={fullResolution}
-              onTimePick={({ trialId, time }) => {
-                setBookmarkPrefill({
-                  trialId,
-                  time,
-                  nonce: Date.now(),
-                });
-              }}
-            />
-          ) : (
-            <div className="flex h-[480px] items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
-              {mode === "aligned" && series.length > 0
-                ? "Selected trials need session start times (set them on Dashboard)."
-                : "Select one or more trials to plot."}
+            <div className="min-w-0 2xl:sticky 2xl:top-6 2xl:self-start">
+              <PlotTrialNotes series={visibleSeries} onSaved={handleTrialUpdated} />
             </div>
-          )}
+          ) : null}
         </div>
-
-        {visibleSeries.length > 0 ? (
-          <>
-            <PlotBookmarkAdd
-              series={visibleSeries}
-              prefill={bookmarkPrefill}
-              onSaved={handleTrialUpdated}
-            />
-            <PlotTrialNotes series={visibleSeries} onSaved={handleTrialUpdated} />
-          </>
-        ) : null}
       </section>
     </div>
   );
