@@ -23,8 +23,7 @@
  * X-AXIS MODES:
  *   - calendar ("Clock time"):  ISO timestamps; Plotly date axis, tick %H:%M
  *   - aligned  ("Align…"):      minutes since sessionStartTime; requires that
- *                               field on every trial; AH-only when parent
- *                               forces metrics=["absHumidity"]
+ *                               field on every trial
  *
  * BOOKMARKS:
  *   Vertical markers at clock times (HH:MM[:SS] on the trial's data date).
@@ -850,7 +849,9 @@ export function SensorPlot({
 
     const titleBase =
       mode === "aligned"
-        ? "Absolute Humidity vs Elapsed Time (aligned by session start)"
+        ? metrics.length === 1
+          ? `${METRIC_LABELS[metrics[0]]} vs Elapsed Time (aligned by session start)`
+          : "Absolute Humidity, Relative Humidity & Temperature vs Elapsed Time (aligned by session start)"
         : metrics.length === 1
           ? `${METRIC_LABELS[metrics[0]]} vs Time`
           : "Absolute Humidity, Relative Humidity & Temperature vs Time";

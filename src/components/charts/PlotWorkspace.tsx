@@ -292,7 +292,7 @@ export function PlotWorkspace() {
     });
   }, []);
 
-  const plotHeight = mode === "aligned" || view !== "combined" ? 480 : 720;
+  const plotHeight = view !== "combined" ? 480 : 720;
 
   return (
     <div className="mx-auto grid max-w-7xl items-stretch gap-6 px-4 py-6 lg:grid-cols-[260px_1fr]">
@@ -416,7 +416,7 @@ export function PlotWorkspace() {
             <SensorPlot
               series={visibleSeries}
               mode={mode}
-              metrics={mode === "aligned" ? ["absHumidity"] : metrics}
+              metrics={metrics}
               height={plotHeight}
               plotRevision={plotRevision}
               showSmooth={showSmooth}
