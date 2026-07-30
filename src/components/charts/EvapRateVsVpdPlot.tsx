@@ -3,13 +3,21 @@
 /**
  * Evaporation Rate vs VPD — scatter / line of AH_rate (y) against VPD (x).
  * Points follow chronological order within each trial (line connects time).
+ * X-axis fixed to 0–2 kPa; Y-axis uses robust percentiles to ignore spikes.
  */
 
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis } from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
-import { ahRateSeries, vpdSeries } from "@/lib/derived-metrics";
+import {
+  AH_RATE_MIN_FOR_EVAP_PLOTS,
+  ahRateSeries,
+  percentileRange,
+  VPD_X_RANGE,
+  vpdSeries,
+} from "@/lib/derived-metrics";
 import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
+import { sessionStartIso } from "@/lib/parse-csv";
 import { uniqueDateLabels } from "@/lib/trial-sort";
 import type { TrialSeries } from "@/types/trial";
 
@@ -26,18 +34,6 @@ function legendName(s: TrialSeries): string {
   return plotLabel
     ? `${s.meta.label} · ${short} · ${plotLabel}`
     : `${s.meta.label} · ${short}`;
-}
-
-function paddedRange(vals: number[]): [number, number] {
-  if (vals.length === 0) return [0, 1];
-  let lo = vals[0];
-  let hi = vals[0];
-  for (const v of vals) {
-    if (v < lo) lo = v;
-    if (v > hi) hi = v;
-  }
-  const pad = (hi - lo) * 0.06 || Math.abs(hi) * 0.06 || 0.1;
-  return [lo - pad, hi + pad];
 }
 
 function formatClockUtc(iso: string): string {
@@ -87,10 +83,10 @@ export function EvapRateVsVpdPlot({
     [series],
   );
 
-  const { traces, xVals, yVals } = useMemo(() => {
+  const { traces, yValsInWindow } = useMemo(() => {
     const tracesOut: Data[] = [];
-    const allX: number[] = [];
-    const allY: number[] = [];
+    const yInWindow: number[] = [];
+    const [vpdLo, vpdHi] = VPD_X_RANGE;
 
     for (const s of series) {
       const color = colors[s.meta.id] ?? "#888";
@@ -101,7 +97,17 @@ export function EvapRateVsVpdPlot({
         PLOT_MAX_POINTS,
       );
       const pts = keep.map((i) => s.points[i]);
-      const rates = ahRateSeries(pts, fullResolution ? 10_000 : Infinity);
+      const startIso = sessionStartIso(
+        s.points[0]?.time,
+        s.meta.sessionStartTime,
+      );
+      const sessionStartMs = startIso ? Date.parse(startIso) : null;
+      const rates = ahRateSeries(pts, fullResolution ? 10_000 : Infinity, {
+        sessionStartMs: Number.isFinite(sessionStartMs)
+          ? sessionStartMs
+          : null,
+        minAhRate: AH_RATE_MIN_FOR_EVAP_PLOTS,
+      });
       const vpds = vpdSeries(pts);
 
       const x: number[] = [];
@@ -112,7 +118,12 @@ export function EvapRateVsVpdPlot({
       for (let i = 0; i < pts.length; i++) {
         const vpd = vpds[i];
         const rate = rates[i];
-        if (!Number.isFinite(vpd) || !Number.isFinite(rate)) {
+        if (
+          !Number.isFinite(vpd) ||
+          !Number.isFinite(rate) ||
+          vpd < vpdLo ||
+          vpd > vpdHi
+        ) {
           needGap = x.length > 0;
           continue;
         }
@@ -124,8 +135,7 @@ export function EvapRateVsVpdPlot({
         }
         x.push(vpd);
         y.push(rate);
-        allX.push(vpd);
-        allY.push(rate);
+        yInWindow.push(rate);
         text.push(
           [
             `<span style="color:${color}">●</span> ${name}`,
@@ -153,7 +163,7 @@ export function EvapRateVsVpdPlot({
       });
     }
 
-    return { traces: tracesOut, xVals: allX, yVals: allY };
+    return { traces: tracesOut, yValsInWindow: yInWindow };
   }, [series, colors, fullResolution]);
 
   const layout = useMemo((): Partial<Layout> => {
@@ -176,7 +186,8 @@ export function EvapRateVsVpdPlot({
       tickfont: { color: DARK_THEME.subtext, size: 10 },
       automargin: true,
       autorange: false,
-      range: paddedRange(yVals),
+      // 2–98th percentile so rare spikes do not crush steady-state detail
+      range: percentileRange(yValsInWindow, 2, 98),
     };
 
     return {
@@ -208,12 +219,12 @@ export function EvapRateVsVpdPlot({
         zerolinecolor: DARK_THEME.subtext,
         tickfont: { color: DARK_THEME.subtext, size: 10 },
         autorange: false,
-        range: paddedRange(xVals),
+        range: [...VPD_X_RANGE],
       },
       yaxis: yAxis,
       height,
     };
-  }, [series, xVals, yVals, height]);
+  }, [series, yValsInWindow, height]);
 
   if (series.length === 0) {
     return (

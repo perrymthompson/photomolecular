@@ -19,9 +19,11 @@
  *   - absHumidity  Absolute Humidity (g/m³)  — computed, not logged directly
  *   - rh           Relative Humidity (%RH)   — from CSV measure type containing "RH"
  *   - temp         Temperature (°C)          — non-RH rows in the CSV
- *   - ahRate       AH Rate dAH/dt (g/m³/min) — ΔAH / Δt (backward difference)
+ *   - ahRate       AH Rate dAH/dt (g/m³/min) — ΔAH / Δt + 1-min rolling mean
+ *                  (t ≥ STABILIZATION_TIME_MINUTES from session start)
  *   - vpd          Vapor Pressure Deficit (kPa) — Psat − Pa
- *   - normRate     Norm. Evaporation Rate    — AH_rate / VPD
+ *   - normRate     Norm. Evaporation Rate    — AH_rate / VPD (VPD > 0.05;
+ *                  AH_rate ≥ −0.05; post-stabilization only)
  *
  * X-AXIS MODES:
  *   - calendar ("Clock time"):  ISO timestamps; Plotly date axis, tick %H:%M
@@ -48,6 +50,8 @@ import type {
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import {
   ahRateSeries,
+  type AhRateOptions,
+  NORM_RATE_Y_RANGE,
   normRateSeries,
   vpdSeries,
 } from "@/lib/derived-metrics";
@@ -147,11 +151,19 @@ function metricSeries(
   points: TrialSeries["points"],
   key: MetricKey,
   maxGapMs = Infinity,
+  rateOptions: AhRateOptions = {},
 ): number[] {
-  if (key === "ahRate") return ahRateSeries(points, maxGapMs);
+  if (key === "ahRate") return ahRateSeries(points, maxGapMs, rateOptions);
   if (key === "vpd") return vpdSeries(points);
-  if (key === "normRate") return normRateSeries(points, maxGapMs);
+  if (key === "normRate") return normRateSeries(points, maxGapMs, rateOptions);
   return points.map((p) => metricValue(p, key));
+}
+
+function sessionStartMsForSeries(s: TrialSeries): number | null {
+  const iso = sessionStartIso(s.points[0]?.time, s.meta.sessionStartTime);
+  if (!iso) return null;
+  const ms = Date.parse(iso);
+  return Number.isFinite(ms) ? ms : null;
 }
 
 function splitContinuousPointRuns(
@@ -304,6 +316,7 @@ function metricValueAtInstant(
   points: TrialSeries["points"],
   targetIso: string,
   metric: MetricKey,
+  rateOptions: AhRateOptions = {},
 ): number | null {
   const targetMs = Date.parse(targetIso);
   if (!Number.isFinite(targetMs) || points.length === 0) return null;
@@ -317,7 +330,7 @@ function metricValueAtInstant(
       bestDiff = diff;
     }
   }
-  const ys = metricSeries(points, metric, FULL_RES_GAP_MS);
+  const ys = metricSeries(points, metric, FULL_RES_GAP_MS, rateOptions);
   const v = ys[bestIdx];
   return Number.isFinite(v) ? v : null;
 }
@@ -326,11 +339,12 @@ function metricValueAtBookmark(
   points: TrialSeries["points"],
   bookmark: TrialBookmark,
   metric: MetricKey,
+  rateOptions: AhRateOptions = {},
 ): number | null {
   const targetIso =
     bookmark.plotIso ?? sessionStartIso(points[0]?.time, bookmark.time);
   if (!targetIso) return null;
-  return metricValueAtInstant(points, targetIso, metric);
+  return metricValueAtInstant(points, targetIso, metric, rateOptions);
 }
 
 /** Format a Date as HH:MM:SS in UTC (matches CSV / bookmark clock). */
@@ -566,6 +580,9 @@ export function SensorPlot({
         s.points[0]?.time,
         s.meta.sessionStartTime,
       );
+      const rateOptions: AhRateOptions = {
+        sessionStartMs: sessionStartMsForSeries(s),
+      };
 
       // Cap points before smoothing / hover unless full resolution is on.
       const keep = plotPointIndices(
@@ -581,7 +598,7 @@ export function SensorPlot({
 
       metrics.forEach((metric, mi) => {
         const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
-        const ys = metricSeries(pts, metric, rateGapMs);
+        const ys = metricSeries(pts, metric, rateGapMs, rateOptions);
         for (const v of ys) {
           if (Number.isFinite(v)) metricValues[mi].push(v);
         }
@@ -627,7 +644,7 @@ export function SensorPlot({
           fullResRuns.forEach((run, runIdx) => {
             if (run.length < 2) return;
 
-            const allRunYs = metricSeries(run, metric, rateGapMs);
+            const allRunYs = metricSeries(run, metric, rateGapMs, rateOptions);
             const pairs = run
               .map((p, i) => ({ p, y: allRunYs[i] }))
               .filter((row) => Number.isFinite(row.y));
@@ -715,7 +732,10 @@ export function SensorPlot({
         tickfont: { color: DARK_THEME.subtext, size: 10 },
         automargin: true,
         autorange: false,
-        range: paddedRange(metricValues[mi]),
+        range:
+          metric === "normRate"
+            ? [...NORM_RATE_Y_RANGE]
+            : paddedRange(metricValues[mi]),
       };
     });
 
@@ -758,6 +778,7 @@ export function SensorPlot({
           s.points,
           metrics[0],
           fullResolution ? FULL_RES_GAP_MS : Infinity,
+          { sessionStartMs: sessionStartMsForSeries(s) },
         );
         for (const v of vals) {
           if (!Number.isFinite(v)) continue;
@@ -836,7 +857,9 @@ export function SensorPlot({
         const x = bookmarkPlotX(b, s.points[0]?.time, mode, startIso);
         if (x === null) continue;
 
-        const y = metricValueAtBookmark(s.points, b, metrics[0]);
+        const y = metricValueAtBookmark(s.points, b, metrics[0], {
+          sessionStartMs: sessionStartMsForSeries(s),
+        });
         if (y === null) continue;
         bx.push(x);
         by.push(y);
