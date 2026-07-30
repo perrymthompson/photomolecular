@@ -21,8 +21,8 @@ function channelRank(channel: string): number {
   return i >= 0 ? i : 99;
 }
 
-/** Resolve bookmark clock onto trial timeline (handles next-day times). */
-function resolveClockInstant(
+/** Resolve an end clock onto the trial timeline (may roll to next day past midnight). */
+function resolveEndInstant(
   firstSampleIso: string,
   clockTime: string,
 ): string {
@@ -30,10 +30,39 @@ function resolveClockInstant(
   if (!iso) return firstSampleIso;
   const firstMs = Date.parse(firstSampleIso);
   const targetMs = Date.parse(iso);
+  // Overnight ends (e.g. 00:46 after an evening start) land before firstSample
+  // on the same calendar date, so roll forward one day.
   if (targetMs < firstMs) {
     iso = new Date(targetMs + 86_400_000).toISOString();
   }
   return iso;
+}
+
+/**
+ * Resolve a start clock onto the trial's calendar day.
+ * Uses the MMDDYYYY date from the filename when available — never day-rolls.
+ * (Unlike ends: a start a few minutes before the first CSV row is still same-day.)
+ */
+function resolveStartInstant(
+  meta: TrialMeta,
+  firstSampleIso: string,
+  clockTime: string,
+): string {
+  const parsed = parseTrialFilename(meta.filename);
+  const clock = normalizeClockTime(clockTime);
+  if (parsed?.date && /^\d{8}$/.test(parsed.date) && clock) {
+    const mm = parsed.date.slice(0, 2);
+    const dd = parsed.date.slice(2, 4);
+    const yyyy = parsed.date.slice(4, 8);
+    const full =
+      clock.length === 5
+        ? `${yyyy}-${mm}-${dd}T${clock}:00Z`
+        : `${yyyy}-${mm}-${dd}T${clock}Z`;
+    const d = new Date(full);
+    if (!Number.isNaN(d.getTime())) return d.toISOString();
+  }
+  // Fallback: same calendar date as first sample, no overnight roll.
+  return sessionStartIso(firstSampleIso, clock) ?? firstSampleIso;
 }
 
 export type SiblingEndMarker = {
@@ -59,7 +88,7 @@ export function endTimeForTrial(
       const m = note.match(/Trial\s+([ABC])\b/i);
       if (m && m[1].toUpperCase() !== runLetter) continue;
     }
-    const plotIso = resolveClockInstant(firstIso, b.time);
+    const plotIso = resolveEndInstant(firstIso, b.time);
     return {
       time: normalizeClockTime(b.time),
       plotIso,
@@ -95,7 +124,7 @@ export function startTimeForTrial(
     const time = normalizeClockTime(meta.sessionStartTime);
     return {
       time,
-      plotIso: resolveClockInstant(firstIso, time),
+      plotIso: resolveStartInstant(meta, firstIso, time),
       sourceChannel: parsed?.channel ?? meta.label,
     };
   }
@@ -109,7 +138,7 @@ export function startTimeForTrial(
     }
     return {
       time: normalizeClockTime(b.time),
-      plotIso: b.plotIso ?? resolveClockInstant(firstIso, b.time),
+      plotIso: b.plotIso ?? resolveStartInstant(meta, firstIso, b.time),
       sourceChannel: parsed?.channel ?? meta.label,
     };
   }
