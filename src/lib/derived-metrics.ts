@@ -6,7 +6,8 @@
  * session start (never before that start on the trial date). Rates / VPD /
  * Norm_Rate keep only samples at t ≥ t_start.
  *
- * AH_rate  = ΔAH / Δt (g/m³/min), then 1-minute trailing rolling mean
+ * AH_rate: first smooth raw AH with a 7-point centered rolling mean, then
+ *   AH_rate = ΔAH_smoothed / Δt (g/m³/min)
  * VPD      = Psat − Pa (kPa)
  * Norm_Rate = AH_rate / VPD; NaN unless VPD > 0.05 kPa
  */
@@ -20,6 +21,9 @@ export const AH_TROUGH_SEARCH_MINUTES = 40;
 /** Centered rolling-mean window for AH trough detection (odd). */
 export const AH_TROUGH_SMOOTH_WINDOW = 5;
 
+/** Centered rolling-mean window applied to AH before computing dAH/dt. */
+export const AH_RATE_AH_SMOOTH_WINDOW = 7;
+
 /** Fallback if trough detection finds no valid samples. */
 export const STABILIZATION_TIME_MINUTES = 20;
 
@@ -27,13 +31,9 @@ export const STABILIZATION_TIME_MINUTES = 20;
 export const VPD_MIN_FOR_NORM_KPA = 0.05;
 
 /**
- * Evap-vs-VPD and Norm Rate plots drop strongly negative AH rates
- * (g/m³/min) left over from the humidity drop / noise.
+ * Optional filter for Norm Rate (g/m³/min). Evap-vs-VPD keeps all rates.
  */
 export const AH_RATE_MIN_FOR_EVAP_PLOTS = -0.05;
-
-/** Trailing window for AH_rate rolling mean (ms). */
-export const AH_RATE_SMOOTH_WINDOW_MS = 60_000;
 
 /** Graph B: hard Y bounds for normalized evaporation rate. */
 export const NORM_RATE_Y_RANGE: [number, number] = [-2, 2];
@@ -76,7 +76,7 @@ export type AhTroughResult = {
 };
 
 /**
- * Centered rolling mean (pandas-style window, center=True).
+ * Centered rolling mean (pandas: center=True, min_periods=1).
  * Edge samples average the available neighbors within the window.
  */
 export function centeredRollingMean(
@@ -98,6 +98,7 @@ export function centeredRollingMean(
       sum += values[j];
       count += 1;
     }
+    // min_periods=1
     if (count > 0) out[i] = sum / count;
   }
   return out;
@@ -211,46 +212,6 @@ export function resolveReadyAfterMs(
   return ready;
 }
 
-/**
- * Trailing time-window mean of a series, respecting gaps.
- * Only finite samples within [t_i − windowMs, t_i] contribute; the window
- * stops at a gap larger than maxGapMs.
- */
-function trailingRollingMean(
-  values: number[],
-  timesMs: number[],
-  windowMs: number,
-  maxGapMs: number,
-): number[] {
-  const n = values.length;
-  const out = new Array<number>(n).fill(Number.NaN);
-
-  for (let i = 0; i < n; i++) {
-    if (!Number.isFinite(values[i]) || !Number.isFinite(timesMs[i])) continue;
-
-    const tEnd = timesMs[i];
-    const tStart = tEnd - windowMs;
-    let sum = 0;
-    let count = 0;
-
-    for (let j = i; j >= 0; j--) {
-      const t = timesMs[j];
-      if (!Number.isFinite(t) || t < tStart) break;
-      if (j < i) {
-        const dt = timesMs[j + 1] - t;
-        if (dt > maxGapMs) break;
-      }
-      if (!Number.isFinite(values[j])) continue;
-      sum += values[j];
-      count += 1;
-    }
-
-    if (count > 0) out[i] = sum / count;
-  }
-
-  return out;
-}
-
 function maskBeforeReady(
   values: number[],
   times: number[],
@@ -264,8 +225,8 @@ function maskBeforeReady(
 
 /**
  * Absolute humidity rate of change (g/m³/min).
- * Raw: (AH_i − AH_{i−1}) / Δt_minutes  → positive when humidity rises.
- * Then smoothed with a 1-minute trailing rolling mean.
+ * 1) AH_smoothed = centered 7-point rolling mean of raw AH (min_periods=1)
+ * 2) AH_rate = (AH_smoothed_i − AH_smoothed_{i−1}) / Δt_minutes
  * Samples before the AH trough (t_start) are NaN.
  */
 export function ahRateSeries(
@@ -274,11 +235,15 @@ export function ahRateSeries(
   options: AhRateOptions = {},
 ): number[] {
   const n = points.length;
-  const raw = new Array<number>(n).fill(Number.NaN);
-  if (n < 2) return raw;
+  const out = new Array<number>(n).fill(Number.NaN);
+  if (n < 2) return out;
 
   const times = points.map((p) => Date.parse(p.time));
   const readyAfterMs = resolveReadyAfterMs(points, options);
+  const ahSmoothed = centeredRollingMean(
+    points.map((p) => p.absHumidity),
+    AH_RATE_AH_SMOOTH_WINDOW,
+  );
 
   for (let i = 1; i < n; i++) {
     const t0 = times[i - 1];
@@ -287,27 +252,23 @@ export function ahRateSeries(
     const dtMs = t1 - t0;
     if (dtMs <= 0 || dtMs > maxGapMs) continue;
     if (readyAfterMs != null && t1 < readyAfterMs) continue;
+    const a0 = ahSmoothed[i - 1];
+    const a1 = ahSmoothed[i];
+    if (!Number.isFinite(a0) || !Number.isFinite(a1)) continue;
     const dtMin = dtMs / 60_000;
-    raw[i] =
-      (points[i].absHumidity - points[i - 1].absHumidity) / dtMin;
+    out[i] = (a1 - a0) / dtMin;
   }
 
-  let smoothed = trailingRollingMean(
-    raw,
-    times,
-    AH_RATE_SMOOTH_WINDOW_MS,
-    maxGapMs,
-  );
-  smoothed = maskBeforeReady(smoothed, times, readyAfterMs);
+  let rates = maskBeforeReady(out, times, readyAfterMs);
 
   const minRate = options.minAhRate;
   if (minRate != null) {
-    smoothed = smoothed.map((v) =>
+    rates = rates.map((v) =>
       Number.isFinite(v) && v < minRate ? Number.NaN : v,
     );
   }
 
-  return smoothed;
+  return rates;
 }
 
 /** Vapor pressure deficit (kPa); optionally NaN before AH trough (t_start). */

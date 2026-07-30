@@ -12,7 +12,6 @@ import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis } from "plotly.js";
 import { DARK_THEME, trialColorMapById } from "@/lib/colors";
 import {
-  AH_RATE_MIN_FOR_EVAP_PLOTS,
   ahRateSeries,
   detectAhTurnaround,
   percentileRange,
@@ -149,7 +148,6 @@ function collectPostTurnaroundPoints(
   const rateOpts = {
     sessionStartMs: originMs,
     readyAfterMs: trough?.troughMs ?? null,
-    minAhRate: AH_RATE_MIN_FOR_EVAP_PLOTS,
   };
   const rates = ahRateSeries(
     pts,

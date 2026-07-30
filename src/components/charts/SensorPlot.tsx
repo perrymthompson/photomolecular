@@ -19,7 +19,7 @@
  *   - absHumidity  Absolute Humidity (g/m³)  — computed, not logged directly
  *   - rh           Relative Humidity (%RH)   — from CSV measure type containing "RH"
  *   - temp         Temperature (°C)          — non-RH rows in the CSV
- *   - ahRate       AH Rate dAH/dt (g/m³/min) — ΔAH / Δt + 1-min rolling mean
+ *   - ahRate       AH Rate dAH/dt (g/m³/min) — 7-pt centered AH smooth, then ΔAH/Δt
  *                  (t ≥ detected AH trough / turnaround)
  *   - vpd          Vapor Pressure Deficit (kPa) — Psat − Pa (post-trough)
  *   - normRate     Norm. Evaporation Rate    — AH_rate / VPD (VPD > 0.05;
