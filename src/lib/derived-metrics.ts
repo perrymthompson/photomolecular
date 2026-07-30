@@ -36,7 +36,7 @@ export const AH_RATE_MIN_FOR_EVAP_PLOTS = -0.05;
 export const AH_RATE_SMOOTH_WINDOW_MS = 60_000;
 
 /** Graph B: hard Y bounds for normalized evaporation rate. */
-export const NORM_RATE_Y_RANGE: [number, number] = [-5, 5];
+export const NORM_RATE_Y_RANGE: [number, number] = [-2, 2];
 
 export type AhRateOptions = {
   /**
@@ -330,7 +330,7 @@ export function vpdSeries(
 /**
  * Normalized evaporation rate = AH_rate / VPD ((g/m³/min)/kPa).
  * Requires VPD > 0.05 kPa and AH_rate ≥ AH_RATE_MIN_FOR_EVAP_PLOTS.
- * Values outside the display clamp [-5, 5] are dropped as residual spikes.
+ * Values outside the display clamp [-2, 2] are dropped as residual spikes.
  */
 export function normRateSeries(
   points: SensorPoint[],
