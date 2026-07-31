@@ -1,83 +1,124 @@
 /**
- * Time-series derivatives used by SensorPlot / EvapRateVsVpdPlot.
+ * =============================================================================
+ * COMPUTATION MODULE: derived-metrics.ts
+ * AH trough (t_start), AH_rate = dAH/dt, VPD series, Norm_Rate
+ * =============================================================================
  *
- * AH trough (per trial): 5-point centered rolling mean of AH; t_start = time of
- * min(AH_smoothed) within elapsed [0, AH_TROUGH_SEARCH_MINUTES] after the trial
- * session start (never before that start on the trial date). Rates / VPD /
- * Norm_Rate keep only samples at t ≥ t_start.
+ * SMOOTHING POLICY (updated)
+ * --------------------------
+ * All analysis smoothing uses LOWESS (src/lib/lowess.ts, span = LOWESS_SPAN),
+ * the same smoother drawn as thick "Fit" curves on SensorPlot — so the fit you
+ * see is the curve rates / trough / Norm_Rate are based on.
  *
- * AH_rate: first smooth raw AH with a 7-point centered rolling mean, then
- *   AH_rate = ΔAH_smoothed / Δt (g/m³/min)
- * VPD      = Psat − Pa (kPa)
- * Norm_Rate = AH_rate / VPD; NaN unless VPD > 0.05 kPa
+ *   AH_fit_i   = LOWESS(time, AH_raw)
+ *   VPD_fit_i  = LOWESS(time, VPD_raw)
+ *   AH_rate_i  = (AH_fit_i − AH_fit_{i−1}) / Δt_minutes
+ *   Norm_Rate  = AH_rate_i / VPD_fit_i     (no negative / clamp filters)
+ *
+ * Trough t_start = argmin of AH_fit in [sessionStart, sessionStart+40 min].
+ *
+ * FILE MAP
+ * --------
+ * | Quantity     | Function              | Notes                                      |
+ * |--------------|-----------------------|--------------------------------------------|
+ * | AH raw       | humidity + parse-csv  | stored on SensorPoint.absHumidity          |
+ * | AH / VPD fit | lowessPreserveOrder   | shared with SensorPlot Fit curves          |
+ * | t_start      | detectAhTurnaround    | min of LOESS(AH) in 0–40 min window        |
+ * | AH_rate      | ahRateSeries          | Δ LOESS(AH) / Δt; post-trough              |
+ * | VPD raw/fit  | vpdSeries             | options.smooth → LOESS(VPD)                |
+ * | Norm_Rate    | normRateSeries        | AH_rate / VPD_fit; smoothing only          |
+ * =============================================================================
  */
 
 import { vaporPressureDeficitKPa } from "./humidity";
+import { LOWESS_SPAN, lowessPreserveOrder } from "./lowess";
 import type { SensorPoint } from "@/types/trial";
 
-/** Search window (elapsed minutes from session start) for the AH trough. */
+/** Elapsed-minute search window after session start for AH trough. */
 export const AH_TROUGH_SEARCH_MINUTES = 40;
 
-/** Centered rolling-mean window for AH trough detection (odd). */
+/**
+ * @deprecated Analysis now uses LOESS; kept only for reference / old comments.
+ * Was: centered rolling window for trough detection.
+ */
 export const AH_TROUGH_SMOOTH_WINDOW = 5;
 
-/** Centered rolling-mean window applied to AH before computing dAH/dt. */
+/**
+ * @deprecated Analysis now uses LOESS(AH) before Δ/Δt.
+ * Was: 7-point centered mean of AH before rate.
+ */
 export const AH_RATE_AH_SMOOTH_WINDOW = 7;
 
-/** Fallback if trough detection finds no valid samples. */
+/** Fallback delay [min] if trough detection finds no candidate samples. */
 export const STABILIZATION_TIME_MINUTES = 20;
 
-/** Norm_Rate only when VPD exceeds this (kPa) — avoids division spikes. */
-export const VPD_MIN_FOR_NORM_KPA = 0.05;
+/**
+ * Soft floor for Norm_Rate denominator: if |VPD| is this small, skip the
+ * ratio (avoid /0). Not a “negative filter” — only numerical safety.
+ */
+export const VPD_MIN_FOR_NORM_KPA = 1e-6;
 
 /**
- * Optional filter for Norm Rate (g/m³/min). Evap-vs-VPD keeps all rates.
+ * @deprecated No longer applied to Norm Rate or Evap-vs-VPD.
+ * Previously dropped AH_rate < −0.05 before Norm_Rate.
  */
 export const AH_RATE_MIN_FOR_EVAP_PLOTS = -0.05;
 
-/** Graph B: hard Y bounds for normalized evaporation rate. */
+/**
+ * Optional display hint for Norm Rate Y-axis (SensorPlot may still use
+ * padded autorange). Values are NOT dropped from the series anymore.
+ */
 export const NORM_RATE_Y_RANGE: [number, number] = [-2, 2];
+
+/** Span used for analysis LOESS — must match SensorPlot Fit curves. */
+export const ANALYSIS_LOWESS_SPAN = LOWESS_SPAN;
 
 export type AhRateOptions = {
   /**
-   * Session / exposure start as epoch ms. Elapsed time is measured from this
-   * (falls back to the first sample time when omitted).
+   * Trial session / exposure start as epoch ms (from sessionStartTime + date).
+   * Elapsed time and trough floor are measured from this instant.
+   * Falls back to first sample time when omitted / null.
    */
   sessionStartMs?: number | null;
   /**
-   * Explicit ready time (e.g. precomputed AH trough). When omitted, trough
-   * detection runs automatically.
+   * Explicit t_start. When set (typical from detectAhTurnaround), skips
+   * re-detecting the trough inside resolveReadyAfterMs.
    */
   readyAfterMs?: number | null;
   /**
-   * If set, skip trough detection and use a fixed delay from session start.
+   * If set, skip trough detection and use fixed delay:
+   *   readyAfterMs = sessionStart + stabilizeMinutes
    */
   stabilizeMinutes?: number;
-  /** Elapsed-minute window used to search for the AH minimum (default 40). */
+  /** Override AH_TROUGH_SEARCH_MINUTES when detecting trough. */
   troughSearchMinutes?: number;
   /**
-   * If set, rates below this (g/m³/min) become NaN
-   * (used by Evap-vs-VPD and Norm Rate plots).
+   * @deprecated Ignored. Norm Rate / Evap no longer filter by AH_rate sign.
    */
   minAhRate?: number;
+  /**
+   * When true (default for analysis callers that opt in), VPD is LOESS-smoothed.
+   * SensorPlot "raw" VPD trace passes smooth: false then draws Fit via lowess.
+   */
+  smooth?: boolean;
 };
 
 export type AhTroughResult = {
-  /** Absolute UTC instant of the detected AH minimum. */
+  /** Absolute UTC instant of the detected AH minimum (= t_start). */
   troughMs: number;
   troughIso: string;
   troughIndex: number;
-  /** Smoothed AH at the trough (g/m³). */
+  /** LOESS-smoothed AH at the trough [g/m³]. */
   ahSmoothed: number;
-  /** Raw AH at the trough sample (g/m³). */
+  /** Raw (unsmoothed) AH at the same index [g/m³]. */
   ahRaw: number;
-  /** Elapsed minutes from session/data origin. */
+  /** Elapsed minutes from session/data floor to trough. */
   elapsedMinutes: number;
 };
 
 /**
- * Centered rolling mean (pandas: center=True, min_periods=1).
- * Edge samples average the available neighbors within the window.
+ * Centered rolling mean — retained for utility / tests; analysis uses LOESS.
+ * pandas: rolling(window, min_periods=1, center=True).mean()
  */
 export function centeredRollingMean(
   values: number[],
@@ -98,7 +139,6 @@ export function centeredRollingMean(
       sum += values[j];
       count += 1;
     }
-    // min_periods=1
     if (count > 0) out[i] = sum / count;
   }
   return out;
@@ -118,11 +158,28 @@ function elapsedOriginMs(
 }
 
 /**
- * Detect when AH finishes its initial drop: min of 5-point centered AH
- * within elapsed [0, searchMinutes] after the trial session start.
+ * LOESS-smoothed Absolute Humidity in original sample order.
+ * This is the curve SensorPlot Fit draws for AH (same span).
+ */
+export function ahLowessSeries(
+  points: SensorPoint[],
+  span: number = ANALYSIS_LOWESS_SPAN,
+): number[] {
+  const times = points.map((p) => Date.parse(p.time));
+  const ahs = points.map((p) => p.absHumidity);
+  return lowessPreserveOrder(times, ahs, span);
+}
+
+/**
+ * Detect AH turnaround / lid-stabilization trough → t_start.
  *
- * When `sessionStartMs` is set (trial start on that date), the trough is
- * never earlier than that instant — pre-start samples are ignored.
+ * ALGORITHM (same as before, but AH_fit is LOESS not 5-pt rolling mean)
+ * --------------------------------------------------------------------
+ * 1. floorMs = sessionStartMs if provided, else first sample time.
+ * 2. AH_fit = LOWESS(time, AH_raw)
+ * 3. Among samples with t ∈ [floorMs, floorMs + searchMinutes]:
+ *      i* = argmin AH_fit_i
+ * 4. t_start = timestamp of i*
  */
 export function detectAhTurnaround(
   points: SensorPoint[],
@@ -137,12 +194,11 @@ export function detectAhTurnaround(
     sessionStartMs != null && Number.isFinite(sessionStartMs)
       ? sessionStartMs
       : null;
-  // Prefer trial session start; otherwise first sample. Hard floor for t_start.
   const floorMs = trialStartMs ?? firstSampleMs;
   if (floorMs == null) return null;
 
   const ahs = points.map((p) => p.absHumidity);
-  const smoothed = centeredRollingMean(ahs, AH_TROUGH_SMOOTH_WINDOW);
+  const smoothed = lowessPreserveOrder(times, ahs, ANALYSIS_LOWESS_SPAN);
   const searchEndMs = floorMs + searchMinutes * 60_000;
 
   let bestIdx = -1;
@@ -151,7 +207,6 @@ export function detectAhTurnaround(
     const t = times[i];
     const v = smoothed[i];
     if (!Number.isFinite(t) || !Number.isFinite(v)) continue;
-    // Must be at/after this trial's start on its date (never before).
     if (t < floorMs || t > searchEndMs) continue;
     if (v < bestVal) {
       bestVal = v;
@@ -174,7 +229,7 @@ export function detectAhTurnaround(
   };
 }
 
-/** Resolve the ready-after instant: explicit, fixed delay, or AH trough. */
+/** Resolve ready-after instant (trough / fixed delay / fallback). */
 export function resolveReadyAfterMs(
   points: SensorPoint[],
   options: AhRateOptions = {},
@@ -205,7 +260,6 @@ export function resolveReadyAfterMs(
     }
   }
 
-  // Never start rate / evap windows before the trial session start.
   if (ready != null && floorMs != null && ready < floorMs) {
     ready = floorMs;
   }
@@ -224,10 +278,12 @@ function maskBeforeReady(
 }
 
 /**
- * Absolute humidity rate of change (g/m³/min).
- * 1) AH_smoothed = centered 7-point rolling mean of raw AH (min_periods=1)
- * 2) AH_rate = (AH_smoothed_i − AH_smoothed_{i−1}) / Δt_minutes
- * Samples before the AH trough (t_start) are NaN.
+ * Absolute humidity rate from the LOESS AH curve [g/m³/min].
+ *
+ *   AH_fit_i = LOWESS(t, AH_raw)
+ *   AH_rate_i = (AH_fit_i − AH_fit_{i−1}) / Δt_min
+ *
+ * Samples before t_start are NaN. No sign filter.
  */
 export function ahRateSeries(
   points: SensorPoint[],
@@ -240,9 +296,10 @@ export function ahRateSeries(
 
   const times = points.map((p) => Date.parse(p.time));
   const readyAfterMs = resolveReadyAfterMs(points, options);
-  const ahSmoothed = centeredRollingMean(
+  const ahSmoothed = lowessPreserveOrder(
+    times,
     points.map((p) => p.absHumidity),
-    AH_RATE_AH_SMOOTH_WINDOW,
+    ANALYSIS_LOWESS_SPAN,
   );
 
   for (let i = 1; i < n; i++) {
@@ -259,24 +316,30 @@ export function ahRateSeries(
     out[i] = (a1 - a0) / dtMin;
   }
 
-  let rates = maskBeforeReady(out, times, readyAfterMs);
-
-  const minRate = options.minAhRate;
-  if (minRate != null) {
-    rates = rates.map((v) =>
-      Number.isFinite(v) && v < minRate ? Number.NaN : v,
-    );
-  }
-
-  return rates;
+  return maskBeforeReady(out, times, readyAfterMs);
 }
 
-/** Vapor pressure deficit (kPa); optionally NaN before AH trough (t_start). */
+/**
+ * Vapor pressure deficit [kPa].
+ *
+ *   VPD_raw_i = Psat(T_i) − Pa(RH_i, T_i)   // humidity.ts
+ *   if options.smooth: VPD_i = LOWESS(t, VPD_raw)
+ *   then mask t < t_start when session/trough options are set
+ *
+ * SensorPlot raw VPD: call with smooth: false (default).
+ * Evap / Norm analysis: call with smooth: true.
+ */
 export function vpdSeries(
   points: SensorPoint[],
   options: AhRateOptions = {},
 ): number[] {
-  const vpds = points.map((p) => vaporPressureDeficitKPa(p.rh, p.temp));
+  const times = points.map((p) => Date.parse(p.time));
+  let vpds = points.map((p) => vaporPressureDeficitKPa(p.rh, p.temp));
+
+  if (options.smooth) {
+    vpds = lowessPreserveOrder(times, vpds, ANALYSIS_LOWESS_SPAN);
+  }
+
   const slice =
     options.readyAfterMs != null ||
     options.sessionStartMs != null ||
@@ -284,42 +347,37 @@ export function vpdSeries(
   if (!slice) return vpds;
 
   const readyAfterMs = resolveReadyAfterMs(points, options);
-  const times = points.map((p) => Date.parse(p.time));
   return maskBeforeReady(vpds, times, readyAfterMs);
 }
 
 /**
- * Normalized evaporation rate = AH_rate / VPD ((g/m³/min)/kPa).
- * Requires VPD > 0.05 kPa and AH_rate ≥ AH_RATE_MIN_FOR_EVAP_PLOTS.
- * Values outside the display clamp [-2, 2] are dropped as residual spikes.
+ * Normalized evaporation rate from smoothed curves only:
+ *
+ *   Norm_Rate_i = AH_rate_i / VPD_fit_i
+ *
+ * where AH_rate comes from LOESS(AH) and VPD_fit is LOESS(VPD).
+ * No AH_rate sign filter; no [-2, 2] value drop.
+ * Only skips non-finite inputs or |VPD| ≤ VPD_MIN_FOR_NORM_KPA (div-by-zero).
  */
 export function normRateSeries(
   points: SensorPoint[],
   maxGapMs = Infinity,
   options: AhRateOptions = {},
 ): number[] {
-  const rates = ahRateSeries(points, maxGapMs, {
-    ...options,
-    minAhRate: options.minAhRate ?? AH_RATE_MIN_FOR_EVAP_PLOTS,
-  });
-  const vpds = vpdSeries(points, options);
-  const [yLo, yHi] = NORM_RATE_Y_RANGE;
+  const rates = ahRateSeries(points, maxGapMs, options);
+  const vpds = vpdSeries(points, { ...options, smooth: true });
   return rates.map((rate, i) => {
     if (!Number.isFinite(rate)) return Number.NaN;
     const vpd = vpds[i];
-    if (!Number.isFinite(vpd) || vpd <= VPD_MIN_FOR_NORM_KPA) {
+    if (!Number.isFinite(vpd) || Math.abs(vpd) <= VPD_MIN_FOR_NORM_KPA) {
       return Number.NaN;
     }
-    const norm = rate / vpd;
-    if (!Number.isFinite(norm) || norm < yLo || norm > yHi) {
-      return Number.NaN;
-    }
-    return norm;
+    return rate / vpd;
   });
 }
 
 /**
- * Robust [lo, hi] from percentiles so extreme outliers do not dominate axes.
+ * Robust [lo, hi] from percentiles — DISPLAY ONLY (does not drop data).
  */
 export function percentileRange(
   vals: number[],

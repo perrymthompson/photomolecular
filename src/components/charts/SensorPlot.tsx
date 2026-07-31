@@ -8,22 +8,24 @@
  * This is the main Plotly renderer. Data arrives already computed as
  * TrialSeries[] from the API (`/api/trials/series` → parseChamberCsv).
  *
- * PIPELINE (where each value comes from):
+ * PIPELINE (where each value comes from — AUDIT THIS WHEN CHECKING MATH):
  *   1. CSV rows          → src/lib/parse-csv.ts   (RH + Temp joined by timestamp)
- *   2. Absolute humidity → src/lib/humidity.ts    (Magnus–Tetens, g/m³)
- *   3. This file         → draws raw + LOWESS-smoothed lines, session markers,
- *                          and time bookmarks
- *   4. Smoothing         → src/lib/lowess.ts      (span = 0.08, like R loess)
+ *   2. Absolute humidity → src/lib/humidity.ts    absoluteHumidity() → point.absHumidity
+ *   3. Derived rates     → src/lib/derived-metrics.ts
+ *        detectAhTurnaround / ahRateSeries / vpdSeries / normRateSeries
+ *        (analysis uses LOESS with the same span as Fit curves below)
+ *   4. This file         → draws time-series; calls metricSeries() which
+ *                          dispatches to derived-metrics for ahRate/vpd/normRate
+ *   5. Display Fit       → src/lib/lowess.ts (LOWESS_SPAN) — same smoother as analysis
  *
- * METRICS:
- *   - absHumidity  Absolute Humidity (g/m³)  — computed, not logged directly
- *   - rh           Relative Humidity (%RH)   — from CSV measure type containing "RH"
- *   - temp         Temperature (°C)          — non-RH rows in the CSV
- *   - ahRate       AH Rate dAH/dt (g/m³/min) — 7-pt centered AH smooth, then ΔAH/Δt
- *                  (t ≥ detected AH trough / turnaround)
- *   - vpd          Vapor Pressure Deficit (kPa) — Psat − Pa (post-trough)
- *   - normRate     Norm. Evaporation Rate    — AH_rate / VPD (VPD > 0.05;
- *                  AH_rate ≥ −0.05; post-trough only)
+ * METRICS (computation location):
+ *   - absHumidity  humidity.ts via parse-csv (stored). Fit = LOESS(AH).
+ *   - rh, temp     CSV fields. Fit = LOESS of that field.
+ *   - ahRate       Δ LOESS(AH) / Δt after trough (derived-metrics.ahRateSeries)
+ *   - vpd          raw VPD here; Fit = LOESS(VPD). Analysis/Evap use smooth VPD.
+ *   - normRate     AH_rate / LOESS(VPD); smoothing only (no negative drop)
+ *
+ * AH trough marker: detectAhTurnaround() = argmin LOESS(AH) in 0–40 min window.
  *
  * X-AXIS MODES:
  *   - calendar ("Clock time"):  ISO timestamps; Plotly date axis, tick %H:%M
@@ -52,7 +54,6 @@ import {
   ahRateSeries,
   type AhRateOptions,
   detectAhTurnaround,
-  NORM_RATE_Y_RANGE,
   normRateSeries,
   vpdSeries,
 } from "@/lib/derived-metrics";
@@ -89,13 +90,18 @@ type Props = {
   showBookmarks?: boolean;
   /** Plot every CSV sample (slower); default false uses ~1800 evenly spaced points. */
   fullResolution?: boolean;
+  /**
+   * When true and exactly two trials are plotted, add Δ = series[0] − series[1]
+   * on the currently displayed x-axis (clock time or aligned minutes) and metrics.
+   */
+  showDifference?: boolean;
   /** Click a point/time → fill bookmark form (does not create a bookmark). */
   onTimePick?: (pick: PlotTimePick) => void;
 };
 
 type CurveMeta = {
   trialId: string;
-  kind: "raw" | "smooth" | "bookmark";
+  kind: "raw" | "smooth" | "bookmark" | "difference";
   color: string;
   metric?: MetricKey;
   bookmarkCount?: number;
@@ -103,6 +109,7 @@ type CurveMeta = {
 
 const BOOKMARK_SIZE = 13;
 const END_LINE_COLOR = "#8a8a8d";
+const DIFF_LINE_COLOR = "#E8C547";
 const END_LINE_HOVER_STEPS = 28;
 const FULL_RES_GAP_MS = 10_000;
 const METRIC_SHORT: Record<MetricKey, { short: string; unit: string }> = {
@@ -147,7 +154,12 @@ function metricValue(p: TrialSeries["points"][0], key: MetricKey): number {
   return Number.NaN;
 }
 
-/** Y values for a metric across a point list (handles derived rates / VPD). */
+/**
+ * Dispatch y-values for one metric.
+ * Stored fields (AH/RH/Temp) come from SensorPoint; derived metrics call
+ * derived-metrics.ts (ahRateSeries / vpdSeries / normRateSeries).
+ * rateOptions.sessionStartMs / readyAfterMs control the post-trough slice.
+ */
 function metricSeries(
   points: TrialSeries["points"],
   key: MetricKey,
@@ -165,6 +177,123 @@ function sessionStartMsForSeries(s: TrialSeries): number | null {
   if (!iso) return null;
   const ms = Date.parse(iso);
   return Number.isFinite(ms) ? ms : null;
+}
+
+/**
+ * Build numeric (x, y) for one trial/metric in the CURRENT plot mode.
+ * x is epoch ms (calendar) or minutes since session start (aligned).
+ * Only finite y samples are kept (sorted by x).
+ */
+function seriesNumericXY(
+  s: TrialSeries,
+  metric: MetricKey,
+  mode: PlotMode,
+  fullResolution: boolean,
+): { x: number[]; y: number[]; label: string } | null {
+  const startIso = sessionStartIso(
+    s.points[0]?.time,
+    s.meta.sessionStartTime,
+  );
+  if (mode === "aligned" && !startIso) return null;
+
+  const sessionStartMs = sessionStartMsForSeries(s);
+  const trough = detectAhTurnaround(s.points, sessionStartMs);
+  const rateOptions: AhRateOptions = {
+    sessionStartMs,
+    readyAfterMs: trough?.troughMs ?? null,
+  };
+  const keep = plotPointIndices(
+    s.points.length,
+    fullResolution,
+    PLOT_MAX_POINTS,
+  );
+  const pts = keep.map((i) => s.points[i]);
+  const ys = metricSeries(
+    pts,
+    metric,
+    fullResolution ? FULL_RES_GAP_MS : Infinity,
+    rateOptions,
+  );
+  const startMs = startIso ? Date.parse(startIso) : Number.NaN;
+
+  const x: number[] = [];
+  const y: number[] = [];
+  for (let i = 0; i < pts.length; i++) {
+    if (!Number.isFinite(ys[i])) continue;
+    const tMs = Date.parse(pts[i].time);
+    if (!Number.isFinite(tMs)) continue;
+    const xv =
+      mode === "aligned" ? (tMs - startMs) / 60_000 : tMs;
+    if (!Number.isFinite(xv)) continue;
+    x.push(xv);
+    y.push(ys[i]);
+  }
+  if (x.length < 2) return null;
+
+  // Ensure ascending x for interpolation
+  const order = x.map((_, i) => i).sort((a, b) => x[a] - x[b]);
+  return {
+    x: order.map((i) => x[i]),
+    y: order.map((i) => y[i]),
+    label: legendName(s),
+  };
+}
+
+/** Linear interpolation; null if xq outside [xs[0], xs[n-1]]. xs ascending. */
+function interpAt(xs: number[], ys: number[], xq: number): number | null {
+  const n = xs.length;
+  if (n === 0 || xq < xs[0] || xq > xs[n - 1]) return null;
+  if (xq === xs[0]) return ys[0];
+  if (xq === xs[n - 1]) return ys[n - 1];
+  let lo = 0;
+  let hi = n - 1;
+  while (hi - lo > 1) {
+    const mid = (lo + hi) >> 1;
+    if (xs[mid] <= xq) lo = mid;
+    else hi = mid;
+  }
+  const x0 = xs[lo];
+  const x1 = xs[hi];
+  if (x1 === x0) return ys[lo];
+  const t = (xq - x0) / (x1 - x0);
+  return ys[lo] * (1 - t) + ys[hi] * t;
+}
+
+/**
+ * Δ(x) = yA(x) − yB(x) on the overlapping x-range of the two displayed curves.
+ * Uses the union of sample x in the overlap; linear interp where needed.
+ */
+function differenceOnSharedX(
+  a: { x: number[]; y: number[]; label: string },
+  b: { x: number[]; y: number[]; label: string },
+): { x: number[]; y: number[]; name: string } | null {
+  const xMin = Math.max(a.x[0], b.x[0]);
+  const xMax = Math.min(a.x[a.x.length - 1], b.x[b.x.length - 1]);
+  if (!(xMax > xMin)) return null;
+
+  const gridSet = new Set<number>();
+  for (const xv of a.x) {
+    if (xv >= xMin && xv <= xMax) gridSet.add(xv);
+  }
+  for (const xv of b.x) {
+    if (xv >= xMin && xv <= xMax) gridSet.add(xv);
+  }
+  const grid = [...gridSet].sort((u, v) => u - v);
+  const xOut: number[] = [];
+  const yOut: number[] = [];
+  for (const xv of grid) {
+    const ya = interpAt(a.x, a.y, xv);
+    const yb = interpAt(b.x, b.y, xv);
+    if (ya === null || yb === null) continue;
+    xOut.push(xv);
+    yOut.push(ya - yb);
+  }
+  if (xOut.length < 2) return null;
+  return {
+    x: xOut,
+    y: yOut,
+    name: `Δ (${a.label} − ${b.label})`,
+  };
 }
 
 function splitContinuousPointRuns(
@@ -491,6 +620,7 @@ export function SensorPlot({
   showSmooth = true,
   showBookmarks = true,
   fullResolution = false,
+  showDifference = false,
   onTimePick,
 }: Props) {
   // Lazy-load Plotly only when we have data (keeps initial bundle smaller).
@@ -695,7 +825,11 @@ export function SensorPlot({
           text: rawTrace.text,
           yaxis: axisY,
           line: { color, width: showSmooth ? 1 : 2 },
-          opacity: showSmooth ? 0.35 : 0.9,
+          opacity: showDifference
+            ? 0.22
+            : showSmooth
+              ? 0.35
+              : 0.9,
           connectgaps: false,
           hovertemplate: "%{text}<extra></extra>",
         });
@@ -744,7 +878,8 @@ export function SensorPlot({
               x: smoothX,
               y: smooth.y,
               yaxis: axisY,
-              line: { color, width: 2.4 },
+              line: { color, width: showDifference ? 1.2 : 2.4 },
+              opacity: showDifference ? 0.35 : 1,
               hoverinfo: "skip",
             });
           });
@@ -779,6 +914,84 @@ export function SensorPlot({
       });
     }
 
+    // Δ = trial A − trial B on the currently displayed x-axis / metrics.
+    if (showDifference && current.length === 2) {
+      const [sA, sB] = current;
+      metrics.forEach((metric, mi) => {
+        const a = seriesNumericXY(sA, metric, mode, fullResolution);
+        const b = seriesNumericXY(sB, metric, mode, fullResolution);
+        if (!a || !b) return;
+        const diff = differenceOnSharedX(a, b);
+        if (!diff) return;
+
+        for (const v of diff.y) {
+          if (Number.isFinite(v)) metricValues[mi].push(v);
+        }
+
+        const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
+        const xPlot =
+          mode === "aligned"
+            ? diff.x
+            : diff.x.map((t) => new Date(t).toISOString());
+        const unit = METRIC_SHORT[metric].unit;
+        const text = diff.y.map(
+          (v, i) =>
+            `<span style="color:${DIFF_LINE_COLOR}">●</span> ${diff.name}<br>` +
+            `${METRIC_SHORT[metric].short} Δ ${v.toFixed(4)} ${unit}` +
+            (mode === "aligned"
+              ? `<br>Elapsed ${diff.x[i].toFixed(2)} min`
+              : `<br>${formatClockUtc(new Date(diff.x[i]))}`),
+        );
+
+        traces.push({
+          type: "scatter",
+          mode: "lines",
+          name: diff.name,
+          legendgroup: "difference",
+          showlegend: mi === 0,
+          x: xPlot,
+          y: diff.y,
+          text,
+          yaxis: axisY,
+          line: { color: DIFF_LINE_COLOR, width: 2.6 },
+          connectgaps: false,
+          hovertemplate: "%{text}<extra></extra>",
+        });
+        meta.push({
+          trialId: "",
+          kind: "difference",
+          color: DIFF_LINE_COLOR,
+          metric,
+        });
+
+        if (showSmooth && diff.x.length >= 3) {
+          const smooth = lowess(diff.x, diff.y, LOWESS_SPAN);
+          const smoothX =
+            mode === "aligned"
+              ? smooth.x
+              : smooth.x.map((t) => new Date(t).toISOString());
+          traces.push({
+            type: "scatter",
+            mode: "lines",
+            name: `${diff.name} (smooth)`,
+            legendgroup: "difference",
+            showlegend: false,
+            x: smoothX,
+            y: smooth.y,
+            yaxis: axisY,
+            line: { color: DIFF_LINE_COLOR, width: 3 },
+            hoverinfo: "skip",
+          });
+          meta.push({
+            trialId: "",
+            kind: "smooth",
+            color: DIFF_LINE_COLOR,
+            metric,
+          });
+        }
+      });
+    }
+
     const domainH = 1 / n;
     const gap = 0.06;
     const yAxes: Record<string, Partial<LayoutAxis>> = {};
@@ -788,27 +1001,26 @@ export function SensorPlot({
       const key = mi === 0 ? "yaxis" : `yaxis${mi + 1}`;
       yAxes[key] = {
         title: {
-          text: METRIC_LABELS[metric],
+          text: showDifference
+            ? `${METRIC_LABELS[metric]} (Δ)`
+            : METRIC_LABELS[metric],
           font: { size: 11, color: DARK_THEME.text },
         },
         domain: [Math.max(0, bottom), top - 0.02],
         gridcolor: DARK_THEME.gridMajor,
-        zeroline: metric === "ahRate" || metric === "normRate",
+        zeroline: true,
         zerolinecolor: DARK_THEME.subtext,
         tickfont: { color: DARK_THEME.subtext, size: 10 },
         automargin: true,
         autorange: false,
-        range:
-          metric === "normRate"
-            ? [...NORM_RATE_Y_RANGE]
-            : paddedRange(metricValues[mi]),
+        range: paddedRange(metricValues[mi]),
       };
     });
 
     return { traces, meta, shapes, yAxes, n };
     // pointsKey stands in for series samples; colors keyed by trial ids in pointsKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pointsKey, mode, metrics, colors, showSmooth, fullResolution]);
+  }, [pointsKey, mode, metrics, colors, showSmooth, fullResolution, showDifference]);
 
   /** Cheap layer: bookmark markers + guide lines only. */
   const bookmarkLayer = useMemo(() => {
@@ -1112,7 +1324,7 @@ export function SensorPlot({
   }
 
   // Remount only when the set of trials / view mode changes — not on bookmark edits.
-  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}`;
+  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}|${showDifference ? "diff" : "nodiff"}`;
 
   return (
     <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">

@@ -1,11 +1,33 @@
 "use client";
 
 /**
- * Evaporation Rate vs VPD — scatter of AH_rate (y) against VPD (x).
- * Markers only; per-series (or pooled Light/Dark) linear trendlines.
+ * =============================================================================
+ * COMPUTATION / PLOT MODULE: EvapRateVsVpdPlot.tsx
+ * Scatter: x = VPD [kPa], y = AH_rate [g/m³/min]; OLS trendlines
+ * =============================================================================
  *
- * Pool mode: merge post-turnaround points from many CSVs into two clouds per
- * chamber channel (ch1/ch2) — Light vs Dark — using plotLabel.
+ * DATA MATH IS NOT IN THIS FILE'S EQUATIONS — it calls derived-metrics.ts.
+ * This file is responsible for:
+ *   1. Choosing which SensorPoints to feed the math (downsample / full res)
+ *   2. Calling detectAhTurnaround → ahRateSeries → vpdSeries
+ *   3. Keeping pairs where VPD and AH_rate are finite and VPD > 0
+ *   4. Optional pooling by chamber × Light/Dark plotLabel
+ *   5. OLS linear fit y = m x + b per cloud
+ *   6. Axis display ranges (X padded to data; Y = 2–98th percentile)
+ *
+ * STEP-BY-STEP PER TRIAL (collectPostTurnaroundPoints)
+ * ----------------------------------------------------
+ *   sessionStartMs ← sessionStartIso(firstSample, meta.sessionStartTime)
+ *   trough         ← detectAhTurnaround(FULL s.points, sessionStartMs)
+ *                    // argmin LOESS(AH) in 0–40 min after session start
+ *   pts            ← downsample(s.points) unless fullResolution
+ *   AH_rate[]      ← ahRateSeries(pts, …)  // Δ LOESS(AH)/Δt; no sign filter
+ *   VPD[]          ← vpdSeries(pts, { smooth: true })  // LOESS(VPD)
+ *   keep i if finite(VPD_i), finite(AH_rate_i), VPD_i > 0
+ *   point = (VPD_i, AH_rate_i)
+ *
+ * POOL MODE: merge those points across CSVs sharing (ch1|ch2) × (light|dark).
+ * =============================================================================
  */
 
 import { useEffect, useMemo, useState, type ComponentType } from "react";
@@ -74,7 +96,18 @@ function formatClockUtc(iso: string): string {
   return `${hh}:${mm}:${ss}`;
 }
 
-/** Ordinary least-squares line y = m x + b over finite (x, y) pairs. */
+/**
+ * Ordinary least-squares line through scatter cloud: y = m x + b.
+ *
+ * EQUATIONS (n finite pairs)
+ * --------------------------
+ *   m = (n Σxy − Σx Σy) / (n Σx² − (Σx)²)
+ *   b = (Σy − m Σx) / n
+ * Line segment drawn from x_min to x_max of the cloud:
+ *   (x_min, m x_min + b) → (x_max, m x_max + b)
+ *
+ * Requires n ≥ 2 and non-degenerate x span. This is the "· fit" legend entry.
+ */
 function linearFit(
   xs: number[],
   ys: number[],
@@ -126,6 +159,23 @@ function paddedAxisRange(vals: number[]): [number, number] {
   return [lo - pad, hi + pad];
 }
 
+/**
+ * Build post-turnaround (VPD, AH_rate) points for one trial CSV.
+ *
+ * AUDIT CHECKLIST
+ * ---------------
+ * [ ] Trough from FULL series s.points (not downsampled) — correct t_start
+ * [ ] Rates/VPD from pts (may be downsampled) but masked with same troughMs
+ * [ ] ahRateSeries: Δ LOESS(AH)/Δt_min (derived-metrics.ts)
+ * [ ] vpdSeries({ smooth: true }): LOESS(VPD)
+ * [ ] No minAhRate — negatives kept
+ * [ ] Drop only: non-finite VPD/rate, or VPD ≤ 0
+ *
+ * CALL CHAIN
+ * ----------
+ * sessionStartIso (parse-csv) → detectAhTurnaround (derived-metrics)
+ *   → ahRateSeries + vpdSeries (derived-metrics) → scatter pairs here
+ */
 function collectPostTurnaroundPoints(
   s: TrialSeries,
   fullResolution: boolean,
@@ -148,6 +198,8 @@ function collectPostTurnaroundPoints(
   const rateOpts = {
     sessionStartMs: originMs,
     readyAfterMs: trough?.troughMs ?? null,
+    /** LOESS(VPD) so scatter x matches Fit-quality smoothing. */
+    smooth: true,
   };
   const rates = ahRateSeries(
     pts,

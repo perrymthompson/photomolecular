@@ -113,6 +113,7 @@ export function PlotWorkspace() {
   const [showBookmarks, setShowBookmarks] = useState(true);
   const [fullResolution, setFullResolution] = useState(false);
   const [poolLightDark, setPoolLightDark] = useState(false);
+  const [showDifference, setShowDifference] = useState(false);
   const [loading, setLoading] = useState(false);
   const [plotBusy, setPlotBusy] = useState(false);
   const [plotRevision, setPlotRevision] = useState(0);
@@ -367,13 +368,18 @@ export function PlotWorkspace() {
                   : ["absHumidity"];
 
   const alignedReady = series.length > 0 && series.every((s) => s.meta.sessionStartTime);
-  const visibleSeries = useMemo(
-    () =>
+  const visibleSeries = useMemo(() => {
+    const filtered =
       isScatterView || mode !== "aligned"
         ? series
-        : series.filter((s) => s.meta.sessionStartTime),
-    [isScatterView, mode, series],
-  );
+        : series.filter((s) => s.meta.sessionStartTime);
+    // Keep trial-selector order so Diff = first selected − second selected.
+    const byId = new Map(filtered.map((s) => [s.meta.id, s]));
+    const ordered = selectedIds
+      .map((id) => byId.get(id))
+      .filter((s): s is TrialSeries => Boolean(s));
+    return ordered.length > 0 ? ordered : filtered;
+  }, [isScatterView, mode, series, selectedIds]);
 
   const bumpPlot = () => {
     setPlotBusy(true);
@@ -411,6 +417,20 @@ export function PlotWorkspace() {
     setPoolLightDark(next);
     bumpPlot();
   };
+
+  const setDifferenceAndRefresh = (next: boolean) => {
+    setShowDifference(next);
+    bumpPlot();
+  };
+
+  const canShowDifference =
+    !isScatterView && visibleSeries.length === 2;
+
+  useEffect(() => {
+    if (!canShowDifference && showDifference) {
+      setShowDifference(false);
+    }
+  }, [canShowDifference, showDifference]);
 
   const handleTrialUpdated = useCallback((updated: TrialMeta) => {
     startTransition(() => {
@@ -551,6 +571,42 @@ export function PlotWorkspace() {
           />
           ) : null}
 
+          {!isScatterView ? (
+            <div
+              className="flex rounded border border-[#3a3b3f] p-0.5"
+              title={
+                canShowDifference
+                  ? "Plot Δ = first selected trial − second, on the current x-axis (clock or aligned) and metric(s)"
+                  : "Select exactly two trials to enable difference plot"
+              }
+            >
+              <button
+                type="button"
+                disabled={!canShowDifference}
+                onClick={() => setDifferenceAndRefresh(true)}
+                className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                  showDifference && canShowDifference
+                    ? "bg-[#2a2b2e] text-white"
+                    : "text-[#b5b5b8] hover:text-white"
+                }`}
+              >
+                Diff on
+              </button>
+              <button
+                type="button"
+                disabled={!canShowDifference}
+                onClick={() => setDifferenceAndRefresh(false)}
+                className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                  !showDifference || !canShowDifference
+                    ? "bg-[#2a2b2e] text-white"
+                    : "text-[#b5b5b8] hover:text-white"
+                }`}
+              >
+                Diff off
+              </button>
+            </div>
+          ) : null}
+
           {isScatterView ? (
           <ToggleGroup
             labelOn="Pool Light/Dark"
@@ -616,6 +672,7 @@ export function PlotWorkspace() {
                     showSmooth={showSmooth}
                     showBookmarks={showBookmarks}
                     fullResolution={fullResolution}
+                    showDifference={showDifference && canShowDifference}
                     onTimePick={({ trialId, time }) => {
                       setBookmarkPrefill({
                         trialId,

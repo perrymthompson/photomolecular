@@ -18,15 +18,23 @@
  *        rhByTime   — measure type matches /RH/i
  *        tempByTime — everything else with a valid numeric value
  *   4. For each timestamp that has BOTH rh and temp, emit a SensorPoint with:
- *        absHumidity = absoluteHumidity(rh, temp)   // see humidity.ts
+ *        absHumidity = absoluteHumidity(rh, temp)   // humidity.ts
+ *        ← ONLY place raw AH is computed from RH+T. Later dAH/dt / trough
+ *          reuse SensorPoint.absHumidity (never recompute Magnus here).
  *   5. Sort points ascending by time.
+ *
+ * COMPUTATION HANDOFF (after this file returns SensorPoint[])
+ *   humidity.ts         — AH, Psat, Pa, VPD primitives
+ *   derived-metrics.ts  — trough t_start, AH_rate, VPD series, Norm_Rate
+ *   EvapRateVsVpdPlot   — (VPD, AH_rate) scatter + OLS fits
+ *   SensorPlot          — time-series of stored / derived metrics
  *
  * IMPORTANT: timestamps without a matching RH+Temp pair are dropped. If your
  * plot looks short, check that RH and Temp share identical clock strings.
  *
  * sessionStartIso() combines the first sample's calendar date (YYYY-MM-DD)
  * with a user-entered HH:MM[:SS] (session start or bookmark). Used for
- * dashed session markers and aligned-mode x-axis zero.
+ * dashed session markers, aligned-mode x=0, and AH trough floor.
  * =============================================================================
  */
 
@@ -108,7 +116,13 @@ export function parseChamberCsv(csvText: string): SensorPoint[] {
       time,
       rh,
       temp,
-      // Magnus–Tetens AH — see humidity.ts for the formula.
+      /**
+       * Absolute humidity [g/m³] — Magnus–Tetens (R-script coefficients).
+       * Formula: humidity.ts → absoluteHumidity(rh, temp)
+       *   AH = (6.112 * exp((17.67*T)/(T+243.5)) * RH * 2.1674) / (273.15+T)
+       * Downstream AH_rate / trough NEVER recompute this from RH/T; they
+       * difference / smooth this stored field.
+       */
       absHumidity: absoluteHumidity(rh, temp),
     });
   }
