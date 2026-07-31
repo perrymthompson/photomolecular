@@ -174,3 +174,82 @@ export function formatSigned(v: number, digits = 4): string {
   const body = Math.abs(v).toFixed(digits);
   return v < 0 ? `−${body}` : body;
 }
+
+export type TwoSampleTTest = {
+  nA: number;
+  nB: number;
+  meanA: number;
+  meanB: number;
+  /** meanA − meanB */
+  meanDiff: number;
+  tStatistic: number;
+  pValue: number;
+  ci95: [number, number];
+  /** Welch–Satterthwaite degrees of freedom. */
+  df: number;
+};
+
+/**
+ * Welch two-sample t-test: H0 mean(a) = mean(b).
+ * Used to compare per-run mean Δ between two groups (e.g. 45° vs 90°).
+ */
+export function welchTwoSampleTTest(
+  a: number[],
+  b: number[],
+): TwoSampleTTest | null {
+  const A = a.filter(Number.isFinite);
+  const B = b.filter(Number.isFinite);
+  const nA = A.length;
+  const nB = B.length;
+  if (nA < 2 || nB < 2) return null;
+
+  const mean = (xs: number[]) => xs.reduce((s, v) => s + v, 0) / xs.length;
+  const meanA = mean(A);
+  const meanB = mean(B);
+  const varSample = (xs: number[], m: number) => {
+    let ss = 0;
+    for (const v of xs) {
+      const d = v - m;
+      ss += d * d;
+    }
+    return ss / (xs.length - 1);
+  };
+  const vA = varSample(A, meanA);
+  const vB = varSample(B, meanB);
+  const se2 = vA / nA + vB / nB;
+  if (!(se2 > 0)) {
+    const meanDiff = meanA - meanB;
+    return {
+      nA,
+      nB,
+      meanA,
+      meanB,
+      meanDiff,
+      tStatistic: meanDiff === 0 ? 0 : meanDiff > 0 ? Infinity : -Infinity,
+      pValue: meanDiff === 0 ? 1 : 0,
+      ci95: [meanDiff, meanDiff],
+      df: nA + nB - 2,
+    };
+  }
+
+  const se = Math.sqrt(se2);
+  const meanDiff = meanA - meanB;
+  const tStat = meanDiff / se;
+  // Welch–Satterthwaite df
+  const num = se2 * se2;
+  const den = (vA / nA) ** 2 / (nA - 1) + (vB / nB) ** 2 / (nB - 1);
+  const df = den > 0 ? num / den : nA + nB - 2;
+  const pValue = 2 * (1 - studentTCdf(Math.abs(tStat), df));
+  const tCrit = studentTCritical(df, 0.05);
+  return {
+    nA,
+    nB,
+    meanA,
+    meanB,
+    meanDiff,
+    tStatistic: tStat,
+    pValue: Math.min(1, Math.max(0, pValue)),
+    ci95: [meanDiff - tCrit * se, meanDiff + tCrit * se],
+    df,
+  };
+}

@@ -1,4 +1,4 @@
-/** Plot-label helpers for Light / Dark condition tagging. */
+/** Plot-label helpers for Light / Dark condition and beam angle. */
 
 export type LightCondition = "light" | "dark";
 
@@ -10,5 +10,30 @@ export function lightConditionFromPlotLabel(
   if (!s) return null;
   if (s === "dark" || s.startsWith("dark")) return "dark";
   if (s.startsWith("light")) return "light";
+  return null;
+}
+
+/**
+ * Parse illumination angle from labels like "Light, 45°" / "Light, 90 deg".
+ * Returns null for Dark or unlabeled Light.
+ */
+export function lightAngleFromPlotLabel(
+  plotLabel: string | null | undefined,
+): number | null {
+  const s = (plotLabel ?? "").trim().toLowerCase();
+  if (!s.startsWith("light")) return null;
+  const m = s.match(/(\d+)\s*(?:°|deg)?/);
+  if (!m) return null;
+  const angle = Number(m[1]);
+  return Number.isFinite(angle) ? angle : null;
+}
+
+/** ch1 → New, ch2 → Old (lab convention from trial-metadata). */
+export function hardwareFromChamber(
+  chamber: string | null | undefined,
+): "New" | "Old" | null {
+  const c = (chamber ?? "").trim().toLowerCase();
+  if (c === "ch1") return "New";
+  if (c === "ch2") return "Old";
   return null;
 }
