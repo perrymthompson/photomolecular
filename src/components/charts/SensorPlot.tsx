@@ -22,8 +22,8 @@
  *   - absHumidity  humidity.ts via parse-csv (stored). Fit = LOESS(AH).
  *   - rh, temp     CSV fields. Fit = LOESS of that field.
  *   - ahRate       Δ LOESS(AH) / Δt after trough (derived-metrics.ahRateSeries)
- *   - vpd          raw VPD here; Fit = LOESS(VPD). Analysis/Evap use smooth VPD.
- *   - normRate     AH_rate / LOESS(VPD); smoothing only (no negative drop)
+ *   - vpd          faint = Tetens(RH_raw,T_raw); Fit = Tetens(LOESS(RH),LOESS(T))
+ *   - normRate     AH_rate / VPD_fit (VPD from smoothed RH & T)
  *
  * AH trough marker: detectAhTurnaround() = argmin LOESS(AH) in 0–40 min window.
  *
@@ -844,7 +844,13 @@ export function SensorPlot({
           fullResRuns.forEach((run, runIdx) => {
             if (run.length < 2) return;
 
-            const allRunYs = metricSeries(run, metric, rateGapMs, rateOptions);
+            // VPD Fit = Tetens(LOESS(RH), LOESS(T)) — same as Norm denominator.
+            // Other metrics: LOESS of the plotted y series.
+            const fitOpts: AhRateOptions =
+              metric === "vpd"
+                ? { ...rateOptions, smooth: true }
+                : rateOptions;
+            const allRunYs = metricSeries(run, metric, rateGapMs, fitOpts);
             const pairs = run
               .map((p, i) => ({ p, y: allRunYs[i] }))
               .filter((row) => Number.isFinite(row.y));
@@ -858,16 +864,29 @@ export function SensorPlot({
                   )
                 : pairs.map((row) => Date.parse(row.p.time));
             const yNum = pairs.map((row) => row.y);
-            const cacheKey = `${s.meta.id}|${metric}|${mode}|${runIdx}|${xNum.length}|${xNum[0]}|${xNum[xNum.length - 1]}`;
-            let smooth = lowessCacheRef.current.get(cacheKey);
-            if (!smooth) {
-              smooth = lowess(xNum, yNum, LOWESS_SPAN);
-              lowessCacheRef.current.set(cacheKey, smooth);
+
+            let smoothX: (string | number)[];
+            let smoothY: number[];
+            if (metric === "vpd") {
+              // Already smoothed via RH/T; do not LOESS again.
+              smoothX =
+                mode === "aligned"
+                  ? xNum
+                  : pairs.map((row) => row.p.time);
+              smoothY = yNum;
+            } else {
+              const cacheKey = `${s.meta.id}|${metric}|${mode}|${runIdx}|${xNum.length}|${xNum[0]}|${xNum[xNum.length - 1]}`;
+              let smooth = lowessCacheRef.current.get(cacheKey);
+              if (!smooth) {
+                smooth = lowess(xNum, yNum, LOWESS_SPAN);
+                lowessCacheRef.current.set(cacheKey, smooth);
+              }
+              smoothX =
+                mode === "aligned"
+                  ? smooth.x
+                  : smooth.x.map((t) => new Date(t).toISOString());
+              smoothY = smooth.y;
             }
-            const smoothX =
-              mode === "aligned"
-                ? smooth.x
-                : smooth.x.map((t) => new Date(t).toISOString());
 
             traces.push({
               type: "scatter",
@@ -876,7 +895,7 @@ export function SensorPlot({
               legendgroup: group,
               showlegend: false,
               x: smoothX,
-              y: smooth.y,
+              y: smoothY,
               yaxis: axisY,
               line: { color, width: showDifference ? 1.2 : 2.4 },
               opacity: showDifference ? 0.35 : 1,

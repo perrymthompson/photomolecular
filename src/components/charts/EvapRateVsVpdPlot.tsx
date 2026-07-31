@@ -22,7 +22,7 @@
  *                    // argmin LOESS(AH) in 0–40 min after session start
  *   pts            ← downsample(s.points) unless fullResolution
  *   AH_rate[]      ← ahRateSeries(pts, …)  // Δ LOESS(AH)/Δt; no sign filter
- *   VPD[]          ← vpdSeries(pts, { smooth: true })  // LOESS(VPD)
+ *   VPD[]          ← vpdSeries(pts, { smooth: true })  // Tetens(LOESS(RH), LOESS(T))
  *   keep i if finite(VPD_i), finite(AH_rate_i), VPD_i > 0
  *   point = (VPD_i, AH_rate_i)
  *
@@ -167,7 +167,7 @@ function paddedAxisRange(vals: number[]): [number, number] {
  * [ ] Trough from FULL series s.points (not downsampled) — correct t_start
  * [ ] Rates/VPD from pts (may be downsampled) but masked with same troughMs
  * [ ] ahRateSeries: Δ LOESS(AH)/Δt_min (derived-metrics.ts)
- * [ ] vpdSeries({ smooth: true }): LOESS(VPD)
+ * [ ] vpdSeries({ smooth: true }): Tetens(LOESS(RH), LOESS(T))
  * [ ] No minAhRate — negatives kept
  * [ ] Drop only: non-finite VPD/rate, or VPD ≤ 0
  *
@@ -198,7 +198,7 @@ function collectPostTurnaroundPoints(
   const rateOpts = {
     sessionStartMs: originMs,
     readyAfterMs: trough?.troughMs ?? null,
-    /** LOESS(VPD) so scatter x matches Fit-quality smoothing. */
+    /** LOESS(RH), LOESS(T) → Tetens VPD for scatter x (Norm-consistent). */
     smooth: true,
   };
   const rates = ahRateSeries(

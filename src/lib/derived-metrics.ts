@@ -4,16 +4,16 @@
  * AH trough (t_start), AH_rate = dAH/dt, VPD series, Norm_Rate
  * =============================================================================
  *
- * SMOOTHING POLICY (updated)
- * --------------------------
- * All analysis smoothing uses LOWESS (src/lib/lowess.ts, span = LOWESS_SPAN),
- * the same smoother drawn as thick "Fit" curves on SensorPlot — so the fit you
- * see is the curve rates / trough / Norm_Rate are based on.
+ * SMOOTHING POLICY (Norm / Evap analysis)
+ * ---------------------------------------
+ *   AH_raw     = Magnus(RH_raw, T_raw)          // parse-csv / humidity.ts
+ *   AH_fit     = LOWESS(time, AH_raw)
+ *   AH_rate    = (AH_fit_i − AH_fit_{i−1}) / Δt_minutes
  *
- *   AH_fit_i   = LOWESS(time, AH_raw)
- *   VPD_fit_i  = LOWESS(time, VPD_raw)
- *   AH_rate_i  = (AH_fit_i − AH_fit_{i−1}) / Δt_minutes
- *   Norm_Rate  = AH_rate_i / VPD_fit_i     (no negative / clamp filters)
+ *   RH_fit     = LOWESS(time, RH_raw)
+ *   T_fit      = LOWESS(time, T_raw)
+ *   VPD_fit    = Tetens(RH_fit, T_fit)          // NOT LOESS(VPD_raw)
+ *   Norm_Rate  = AH_rate / VPD_fit
  *
  * Trough t_start = argmin of AH_fit in [sessionStart, sessionStart+40 min].
  *
@@ -22,11 +22,12 @@
  * | Quantity     | Function              | Notes                                      |
  * |--------------|-----------------------|--------------------------------------------|
  * | AH raw       | humidity + parse-csv  | stored on SensorPoint.absHumidity          |
- * | AH / VPD fit | lowessPreserveOrder   | shared with SensorPlot Fit curves          |
+ * | AH fit       | lowessPreserveOrder   | same span as SensorPlot Fit                |
  * | t_start      | detectAhTurnaround    | min of LOESS(AH) in 0–40 min window        |
  * | AH_rate      | ahRateSeries          | Δ LOESS(AH) / Δt; post-trough              |
- * | VPD raw/fit  | vpdSeries             | options.smooth → LOESS(VPD)                |
- * | Norm_Rate    | normRateSeries        | AH_rate / VPD_fit; smoothing only          |
+ * | VPD raw      | vpdSeries(smooth:false) | Tetens(RH_raw, T_raw)                    |
+ * | VPD fit      | vpdSeries(smooth:true)  | Tetens(LOESS(RH), LOESS(T))              |
+ * | Norm_Rate    | normRateSeries        | AH_rate / VPD_fit                          |
  * =============================================================================
  */
 
@@ -97,8 +98,8 @@ export type AhRateOptions = {
    */
   minAhRate?: number;
   /**
-   * When true (default for analysis callers that opt in), VPD is LOESS-smoothed.
-   * SensorPlot "raw" VPD trace passes smooth: false then draws Fit via lowess.
+   * When true: VPD = Tetens(LOESS(RH), LOESS(T)) for Norm / Evap analysis.
+   * When false (default): VPD = Tetens(RH_raw, T_raw) for SensorPlot faint line.
    */
   smooth?: boolean;
 };
@@ -322,22 +323,41 @@ export function ahRateSeries(
 /**
  * Vapor pressure deficit [kPa].
  *
- *   VPD_raw_i = Psat(T_i) − Pa(RH_i, T_i)   // humidity.ts
- *   if options.smooth: VPD_i = LOWESS(t, VPD_raw)
- *   then mask t < t_start when session/trough options are set
+ *   VPD_raw_i = Tetens(RH_raw, T_raw)     // humidity.vaporPressureDeficitKPa
  *
- * SensorPlot raw VPD: call with smooth: false (default).
- * Evap / Norm analysis: call with smooth: true.
+ *   if options.smooth (Norm / Evap path):
+ *     RH_fit = LOWESS(t, RH_raw)
+ *     T_fit  = LOWESS(t, T_raw)
+ *     VPD_i  = Tetens(RH_fit, T_fit)
+ *     // Prefer smoothing sensor inputs before the nonlinear VPD formula
+ *     // (not LOESS of VPD_raw).
+ *
+ * Then mask t < t_start when session/trough options are set.
+ *
+ * SensorPlot faint VPD: smooth: false.
+ * Norm / Evap: smooth: true.
  */
 export function vpdSeries(
   points: SensorPoint[],
   options: AhRateOptions = {},
 ): number[] {
   const times = points.map((p) => Date.parse(p.time));
-  let vpds = points.map((p) => vaporPressureDeficitKPa(p.rh, p.temp));
+  let vpds: number[];
 
   if (options.smooth) {
-    vpds = lowessPreserveOrder(times, vpds, ANALYSIS_LOWESS_SPAN);
+    const rhFit = lowessPreserveOrder(
+      times,
+      points.map((p) => p.rh),
+      ANALYSIS_LOWESS_SPAN,
+    );
+    const tFit = lowessPreserveOrder(
+      times,
+      points.map((p) => p.temp),
+      ANALYSIS_LOWESS_SPAN,
+    );
+    vpds = rhFit.map((rh, i) => vaporPressureDeficitKPa(rh, tFit[i]));
+  } else {
+    vpds = points.map((p) => vaporPressureDeficitKPa(p.rh, p.temp));
   }
 
   const slice =
@@ -351,13 +371,15 @@ export function vpdSeries(
 }
 
 /**
- * Normalized evaporation rate from smoothed curves only:
+ * Normalized evaporation rate:
  *
  *   Norm_Rate_i = AH_rate_i / VPD_fit_i
  *
- * where AH_rate comes from LOESS(AH) and VPD_fit is LOESS(VPD).
+ *   AH_rate = Δ LOESS(AH_raw) / Δt
+ *   VPD_fit = Tetens(LOESS(RH), LOESS(T))
+ *
  * No AH_rate sign filter; no [-2, 2] value drop.
- * Only skips non-finite inputs or |VPD| ≤ VPD_MIN_FOR_NORM_KPA (div-by-zero).
+ * Skips non-finite inputs or |VPD| ≤ VPD_MIN_FOR_NORM_KPA (div-by-zero).
  */
 export function normRateSeries(
   points: SensorPoint[],
