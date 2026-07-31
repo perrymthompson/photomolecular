@@ -114,18 +114,52 @@ export function trapzIntegral(
   return any ? sum : null;
 }
 
+/** Overlap span of a shared-x grid, in minutes. */
+export function overlapDurationMinutes(
+  x: number[],
+  xIsEpochMs = false,
+): number | null {
+  if (x.length < 2) return null;
+  const span = x[x.length - 1] - x[0];
+  if (!(span > 0)) return null;
+  return xIsEpochMs ? span / 60_000 : span;
+}
+
+export type IntegralDiffResult = {
+  /** ∫A dx − ∫B dx over overlap (dx in minutes). */
+  integralDelta: number;
+  /** Length of overlapping x-range in minutes. */
+  overlapMinutes: number;
+  /** (∫A − ∫B) / overlapMinutes — time-averaged Δ. */
+  meanFromIntegral: number;
+};
+
 /**
  * ∫_overlap yA dx − ∫_overlap yB dx on the shared grid
- * (= ∫ (yA − yB) dx). xIsEpochMs when x is wall-clock ms.
+ * (= ∫ (yA − yB) dx), plus mean-from-integral = that / overlap minutes.
+ * xIsEpochMs when x is wall-clock ms.
  */
 export function integralDifferenceOnSharedX(
   a: NumericSeries,
   b: NumericSeries,
   xIsEpochMs = false,
-): number | null {
+): IntegralDiffResult | null {
   const diff = differenceOnSharedX(a, b);
   if (!diff) return null;
-  return trapzIntegral(diff.x, diff.y, xIsEpochMs);
+  const integralDelta = trapzIntegral(diff.x, diff.y, xIsEpochMs);
+  const overlapMinutes = overlapDurationMinutes(diff.x, xIsEpochMs);
+  if (
+    integralDelta == null ||
+    overlapMinutes == null ||
+    !(overlapMinutes > 0)
+  ) {
+    return null;
+  }
+  return {
+    integralDelta,
+    overlapMinutes,
+    meanFromIntegral: integralDelta / overlapMinutes,
+  };
 }
 
 /**

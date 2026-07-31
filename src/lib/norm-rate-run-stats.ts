@@ -54,6 +54,9 @@ export type PairStatRow = {
   stats: DiffSeriesStats;
   /** ∫A dx − ∫B dx over overlap (minutes); Norm Rate → (g/m³)/kPa. */
   integralDelta: number | null;
+  /** (∫A − ∫B) / overlap minutes — same units as Mean Δ. */
+  meanFromIntegral: number | null;
+  overlapMinutes: number | null;
 };
 
 export type ComparisonBlock = {
@@ -250,7 +253,7 @@ function tryPairStats(
   }
   const stats = diffSeriesStats(diff.y);
   if (!stats) return { reason: "Insufficient finite Δ samples for t-test" };
-  const integralDelta = integralDifferenceOnSharedX(
+  const integral = integralDifferenceOnSharedX(
     aXY,
     bXY,
     alignMode === "clock",
@@ -270,7 +273,9 @@ function tryPairStats(
       bPlotLabel: b.meta.plotLabel ?? "",
       tags,
       stats,
-      integralDelta,
+      integralDelta: integral?.integralDelta ?? null,
+      meanFromIntegral: integral?.meanFromIntegral ?? null,
+      overlapMinutes: integral?.overlapMinutes ?? null,
     },
   };
 }

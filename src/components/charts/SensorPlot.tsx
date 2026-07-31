@@ -136,6 +136,9 @@ type DiffStatRow = {
    */
   integralDelta: number | null;
   integralUnit: string;
+  /** (∫A − ∫B) / overlap minutes — same units as Mean Δ. */
+  meanFromIntegral: number | null;
+  overlapMinutes: number | null;
 };
 
 const BOOKMARK_SIZE = 13;
@@ -939,7 +942,7 @@ export function SensorPlot({
         if (!diff) return;
 
         const stats = diffSeriesStats(diff.y);
-        const integralDelta = integralDifferenceOnSharedX(
+        const integral = integralDifferenceOnSharedX(
           a,
           b,
           mode === "calendar",
@@ -950,8 +953,10 @@ export function SensorPlot({
             label: METRIC_SHORT[metric].short,
             unit: METRIC_SHORT[metric].unit,
             stats,
-            integralDelta,
+            integralDelta: integral?.integralDelta ?? null,
             integralUnit: integralUnitFor(metric),
+            meanFromIntegral: integral?.meanFromIntegral ?? null,
+            overlapMinutes: integral?.overlapMinutes ?? null,
           });
         }
 
@@ -1490,6 +1495,20 @@ export function SensorPlot({
                           ? "—"
                           : `${formatSigned(row.integralDelta)} ${row.integralUnit}`}
                       </span>
+                    </div>
+                    <div>
+                      Avg Δ (∫/Δt){" "}
+                      <span className="text-white">
+                        {row.meanFromIntegral == null
+                          ? "—"
+                          : `${formatSigned(row.meanFromIntegral)} ${row.unit}`}
+                      </span>
+                      {row.overlapMinutes != null ? (
+                        <span className="text-[#8a8a8d]">
+                          {" "}
+                          · {row.overlapMinutes.toFixed(1)} min overlap
+                        </span>
+                      ) : null}
                     </div>
                     <div>
                       t=

@@ -69,6 +69,7 @@ function AcrossRunsFooter({
           {formatSigned(stats.meanDelta)}
         </td>
         <td className="px-2 py-2.5 text-[#8a8a8d]">—</td>
+        <td className="px-2 py-2.5 text-[#8a8a8d]">—</td>
         <td className="px-2 py-2.5 font-mono tabular-nums">
           {formatSigned(stats.tStatistic, 3)}
         </td>
@@ -94,7 +95,7 @@ function PairRows({
   if (rows.length === 0) {
     return (
       <tr>
-        <td colSpan={10} className="px-2 py-6 text-center text-[#8a8a8d]">
+        <td colSpan={11} className="px-2 py-6 text-center text-[#8a8a8d]">
           {emptyMessage}
         </td>
       </tr>
@@ -120,6 +121,11 @@ function PairRows({
           </td>
           <td className="px-2 py-2 font-mono tabular-nums">
             {row.integralDelta == null ? "—" : formatSigned(row.integralDelta)}
+          </td>
+          <td className="px-2 py-2 font-mono tabular-nums">
+            {row.meanFromIntegral == null
+              ? "—"
+              : formatSigned(row.meanFromIntegral)}
           </td>
           <td className="px-2 py-2 font-mono tabular-nums">
             {formatSigned(row.stats.tStatistic, 3)}
@@ -166,6 +172,7 @@ function ComparisonTable({
                   <th className="px-2 py-2 font-medium">{bHeader}</th>
                   <th className="px-2 py-2 font-medium">Mean Δ</th>
                   <th className="px-2 py-2 font-medium">∫A−∫B</th>
+                  <th className="px-2 py-2 font-medium">Avg Δ (∫/Δt)</th>
                   <th className="px-2 py-2 font-medium">t</th>
                   <th className="px-2 py-2 font-medium">p</th>
                   <th className="px-2 py-2 font-medium">95% CI</th>
@@ -287,10 +294,10 @@ export function NormRateStatsTable() {
           </h2>
           <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#8a8a8d]">
             Aligned Norm Rate Δ on overlapping time, one-sample t vs 0. Also
-            reports ∫A−∫B (trapezoid of each Norm Rate over the overlap, then
-            subtract — equivalent to ∫δ dt). Toggle changes the comparison
-            x-origin. Origins save best-effort to disk locally; on Vercel they
-            are returned in the API response only (read-only FS).
+            reports ∫A−∫B and Avg Δ (∫/Δt) = (∫A−∫B) / overlap minutes. Toggle
+            changes the comparison x-origin. Origins save best-effort to disk
+            locally; on Vercel they are returned in the API response only
+            (read-only FS).
           </p>
         </div>
         <button
