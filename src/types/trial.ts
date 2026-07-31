@@ -62,7 +62,12 @@ export type TrialSeries = {
   computedBookmarks?: TrialBookmark[];
 };
 
-export type PlotMode = "calendar" | "aligned";
+export type PlotMode = "calendar" | "aligned" | "trough";
+
+/** Session-start or AH-trough modes use elapsed minutes on the x-axis. */
+export function isElapsedPlotMode(mode: PlotMode): boolean {
+  return mode === "aligned" || mode === "trough";
+}
 
 export type MetricKey =
   | "absHumidity"

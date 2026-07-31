@@ -24,7 +24,7 @@ import {
   lightAngleFromPlotLabel,
   lightConditionFromPlotLabel,
 } from "@/lib/plot-label";
-import { differenceOnSharedX } from "@/lib/series-diff";
+import { differenceOnSharedX, integralDifferenceOnSharedX } from "@/lib/series-diff";
 import { parseFilenameParts } from "@/lib/trial-sort";
 import {
   alignModeLabel,
@@ -52,6 +52,8 @@ export type PairStatRow = {
     matchedCondition?: "light" | "dark" | "mixed-light";
   };
   stats: DiffSeriesStats;
+  /** ∫A dx − ∫B dx over overlap (minutes); Norm Rate → (g/m³)/kPa. */
+  integralDelta: number | null;
 };
 
 export type ComparisonBlock = {
@@ -248,6 +250,11 @@ function tryPairStats(
   }
   const stats = diffSeriesStats(diff.y);
   if (!stats) return { reason: "Insufficient finite Δ samples for t-test" };
+  const integralDelta = integralDifferenceOnSharedX(
+    aXY,
+    bXY,
+    alignMode === "clock",
+  );
   return {
     row: {
       dayKey: g.dayKey,
@@ -263,6 +270,7 @@ function tryPairStats(
       bPlotLabel: b.meta.plotLabel ?? "",
       tags,
       stats,
+      integralDelta,
     },
   };
 }

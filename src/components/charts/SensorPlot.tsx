@@ -69,6 +69,7 @@ import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
 import {
   cumulativeSum,
   differenceOnSharedX,
+  integralDifferenceOnSharedX,
 } from "@/lib/series-diff";
 import {
   bookmarkPlotX,
@@ -80,7 +81,7 @@ import { LOWESS_SPAN, lowess } from "@/lib/lowess";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { uniqueDateLabels } from "@/lib/trial-sort";
 import type { MetricKey, PlotMode, TrialBookmark, TrialSeries } from "@/types/trial";
-import { METRIC_LABELS } from "@/types/trial";
+import { isElapsedPlotMode, METRIC_LABELS } from "@/types/trial";
 
 export type PlotTimePick = {
   trialId: string;
@@ -129,6 +130,12 @@ type DiffStatRow = {
   label: string;
   unit: string;
   stats: DiffSeriesStats;
+  /**
+   * ∫ y_first dx − ∫ y_second dx over overlap (trapezoid; dx in minutes).
+   * For Norm Rate units become (g/m³)/kPa.
+   */
+  integralDelta: number | null;
+  integralUnit: string;
 };
 
 const BOOKMARK_SIZE = 13;
@@ -145,6 +152,12 @@ const METRIC_SHORT: Record<MetricKey, { short: string; unit: string }> = {
   vpd: { short: "VPD", unit: "kPa" },
   normRate: { short: "Norm Rate", unit: "(g/m³/min)/kPa" },
 };
+
+function integralUnitFor(metric: MetricKey): string {
+  if (metric === "normRate") return "(g/m³)/kPa";
+  if (metric === "ahRate") return "g/m³";
+  return `${METRIC_SHORT[metric].unit}·min`;
+}
 
 /** Stable fingerprint of sensor points (ignores bookmark/notes edits). */
 function pointsFingerprint(series: TrialSeries[]): string {
@@ -206,8 +219,8 @@ function sessionStartMsForSeries(s: TrialSeries): number | null {
 
 /**
  * Build numeric (x, y) for one trial/metric in the CURRENT plot mode.
- * x is epoch ms (calendar) or minutes since session start (aligned).
- * Only finite y samples are kept (sorted by x).
+ * x is epoch ms (calendar), minutes since session start (aligned), or minutes
+ * since AH trough (trough). Only finite y samples are kept (sorted by x).
  */
 function seriesNumericXY(
   s: TrialSeries,
@@ -223,6 +236,8 @@ function seriesNumericXY(
 
   const sessionStartMs = sessionStartMsForSeries(s);
   const trough = detectAhTurnaround(s.points, sessionStartMs);
+  if (mode === "trough" && !trough) return null;
+
   const rateOptions: AhRateOptions = {
     sessionStartMs,
     readyAfterMs: trough?.troughMs ?? null,
@@ -240,6 +255,7 @@ function seriesNumericXY(
     rateOptions,
   );
   const startMs = startIso ? Date.parse(startIso) : Number.NaN;
+  const troughMs = trough?.troughMs ?? Number.NaN;
 
   const x: number[] = [];
   const y: number[] = [];
@@ -247,15 +263,16 @@ function seriesNumericXY(
     if (!Number.isFinite(ys[i])) continue;
     const tMs = Date.parse(pts[i].time);
     if (!Number.isFinite(tMs)) continue;
-    const xv =
-      mode === "aligned" ? (tMs - startMs) / 60_000 : tMs;
+    let xv: number;
+    if (mode === "calendar") xv = tMs;
+    else if (mode === "trough") xv = (tMs - troughMs) / 60_000;
+    else xv = (tMs - startMs) / 60_000;
     if (!Number.isFinite(xv)) continue;
     x.push(xv);
     y.push(ys[i]);
   }
   if (x.length < 2) return null;
 
-  // Ensure ascending x for interpolation
   const order = x.map((_, i) => i).sort((a, b) => x[a] - x[b]);
   return {
     x: order.map((i) => x[i]),
@@ -316,7 +333,7 @@ function buildRawTraceSeries(
   let cursor = 0;
   runs.forEach((run, runIdx) => {
     if (runIdx > 0) {
-      x.push(mode === "aligned" ? Number.NaN : run[0].time);
+      x.push(isElapsedPlotMode(mode) ? Number.NaN : run[0].time);
       y.push(null);
       text.push("");
       customdata.push("");
@@ -325,12 +342,11 @@ function buildRawTraceSeries(
     for (let j = 0; j < run.length; j++) {
       const p = run[j];
       const yValue = yValues[cursor + j];
-      const xValue =
-        mode === "aligned"
-          ? startIso
-            ? (Date.parse(p.time) - Date.parse(startIso)) / 60000
-            : null
-          : p.time;
+      const xValue = isElapsedPlotMode(mode)
+        ? startIso
+          ? (Date.parse(p.time) - Date.parse(startIso)) / 60000
+          : null
+        : p.time;
       if (
         xValue === null ||
         (typeof xValue === "number" && !Number.isFinite(xValue))
@@ -455,20 +471,20 @@ function formatClockUtc(d: Date): string {
 
 /**
  * Convert a Plotly x value into HH:MM:SS for the bookmark form.
- * Calendar: x is ISO/Date. Aligned: x is minutes since session start.
- * Always UTC clock digits so pasted time matches hover customdata / CSV.
+ * Calendar: x is ISO/Date. Elapsed modes: x is minutes since originIsoStr
+ * (session start or AH trough).
  */
 function xToClockTime(
   x: string | number | Date,
   mode: PlotMode,
-  sessionStartIsoStr: string | null,
+  originIsoStr: string | null,
 ): string | null {
-  if (mode === "aligned") {
-    if (!sessionStartIsoStr) return null;
+  if (isElapsedPlotMode(mode)) {
+    if (!originIsoStr) return null;
     const mins = typeof x === "number" ? x : Number(x);
     if (!Number.isFinite(mins)) return null;
     return formatClockUtc(
-      new Date(Date.parse(sessionStartIsoStr) + mins * 60_000),
+      new Date(Date.parse(originIsoStr) + mins * 60_000),
     );
   }
 
@@ -649,17 +665,6 @@ export function SensorPlot({
     [series],
   );
 
-  const sessionByTrial = useMemo(() => {
-    const map = new Map<string, string | null>();
-    for (const s of series) {
-      map.set(
-        s.meta.id,
-        sessionStartIso(s.points[0]?.time, s.meta.sessionStartTime),
-      );
-    }
-    return map;
-  }, [series]);
-
   /**
    * Expensive layer: raw + LOWESS traces and y-axis ranges.
    * Intentionally ignores bookmark hover / bookmark list edits.
@@ -717,7 +722,9 @@ export function SensorPlot({
             ? startIso
               ? (trough.troughMs - Date.parse(startIso)) / 60000
               : null
-            : trough.troughIso;
+            : mode === "trough"
+              ? 0
+              : trough.troughIso;
         if (troughX !== null) {
           const clock = formatClockUtc(new Date(trough.troughMs));
           const hoverText = [
@@ -775,13 +782,16 @@ export function SensorPlot({
         for (const v of ys) {
           if (Number.isFinite(v)) metricValues[mi].push(v);
         }
+        const plotOriginIso =
+          mode === "trough" ? (trough?.troughIso ?? null) : startIso;
         if (mode === "aligned" && !startIso) return;
+        if (mode === "trough" && !trough) return;
 
         const rawTrace = buildRawTraceSeries(
           pts,
           metric,
           mode,
-          startIso,
+          plotOriginIso,
           color,
           name,
           s.meta.plotLabel ?? "",
@@ -834,12 +844,18 @@ export function SensorPlot({
             if (pairs.length < 2) return;
 
             const xNum =
-              mode === "aligned"
-                ? pairs.map(
-                    (row) =>
-                      (Date.parse(row.p.time) - Date.parse(startIso!)) / 60000,
-                  )
-                : pairs.map((row) => Date.parse(row.p.time));
+              mode === "calendar"
+                ? pairs.map((row) => Date.parse(row.p.time))
+                : mode === "trough"
+                  ? pairs.map(
+                      (row) =>
+                        (Date.parse(row.p.time) - trough!.troughMs) / 60000,
+                    )
+                  : pairs.map(
+                      (row) =>
+                        (Date.parse(row.p.time) - Date.parse(startIso!)) /
+                        60000,
+                    );
             const yNum = pairs.map((row) => row.y);
 
             let smoothX: (string | number)[];
@@ -847,7 +863,7 @@ export function SensorPlot({
             if (metric === "vpd") {
               // Already smoothed via RH/T; do not LOESS again.
               smoothX =
-                mode === "aligned"
+                isElapsedPlotMode(mode)
                   ? xNum
                   : pairs.map((row) => row.p.time);
               smoothY = yNum;
@@ -859,8 +875,8 @@ export function SensorPlot({
                 lowessCacheRef.current.set(cacheKey, smooth);
               }
               smoothX =
-                mode === "aligned"
-                  ? smooth.x
+                isElapsedPlotMode(mode)
+                ? smooth.x
                   : smooth.x.map((t) => new Date(t).toISOString());
               smoothY = smooth.y;
             }
@@ -899,7 +915,7 @@ export function SensorPlot({
       });
     });
 
-    if (mode === "aligned") {
+    if (isElapsedPlotMode(mode)) {
       shapes.push({
         type: "line",
         xref: "x",
@@ -923,19 +939,25 @@ export function SensorPlot({
         if (!diff) return;
 
         const stats = diffSeriesStats(diff.y);
+        const integralDelta = integralDifferenceOnSharedX(
+          a,
+          b,
+          mode === "calendar",
+        );
         if (stats) {
           diffStats.push({
             metric,
             label: METRIC_SHORT[metric].short,
             unit: METRIC_SHORT[metric].unit,
             stats,
+            integralDelta,
+            integralUnit: integralUnitFor(metric),
           });
         }
 
-        const xPlot =
-          mode === "aligned"
-            ? diff.x
-            : diff.x.map((t) => new Date(t).toISOString());
+        const xPlot = isElapsedPlotMode(mode)
+          ? diff.x
+          : diff.x.map((t) => new Date(t).toISOString());
         const unit = METRIC_SHORT[metric].unit;
         const short = METRIC_SHORT[metric].short;
 
@@ -948,7 +970,7 @@ export function SensorPlot({
             (v, i) =>
               `<span style="color:${DIFF_LINE_COLOR}">●</span> ${diff.name}<br>` +
               `${short} Δ ${v.toFixed(4)} ${unit}` +
-              (mode === "aligned"
+              (isElapsedPlotMode(mode)
                 ? `<br>Elapsed ${diff.x[i].toFixed(2)} min`
                 : `<br>${formatClockUtc(new Date(diff.x[i]))}`),
           );
@@ -977,7 +999,7 @@ export function SensorPlot({
           if (showSmooth && diff.x.length >= 3) {
             const smooth = lowess(diff.x, diff.y, LOWESS_SPAN);
             const smoothX =
-              mode === "aligned"
+              isElapsedPlotMode(mode)
                 ? smooth.x
                 : smooth.x.map((t) => new Date(t).toISOString());
             traces.push({
@@ -1014,7 +1036,7 @@ export function SensorPlot({
             return (
               `<span style="color:${CUM_DIFF_LINE_COLOR}">●</span> ${cumName}<br>` +
               `Σ ${short} Δ ${v.toFixed(4)} ${unit}` +
-              (mode === "aligned"
+              (isElapsedPlotMode(mode)
                 ? `<br>Elapsed ${diff.x[i].toFixed(2)} min`
                 : `<br>${formatClockUtc(new Date(diff.x[i]))}`)
             );
@@ -1097,9 +1119,19 @@ export function SensorPlot({
         s.points[0]?.time,
         s.meta.sessionStartTime,
       );
+      const trough = detectAhTurnaround(
+        s.points,
+        sessionStartMsForSeries(s),
+      );
       for (const b of plotBookmarksForSeries(s)) {
         if (!isComputedEndBookmark(b)) continue;
-        const x = bookmarkPlotX(b, s.points[0]?.time, mode, startIso);
+        const x = bookmarkPlotX(
+          b,
+          s.points[0]?.time,
+          mode,
+          startIso,
+          trough?.troughIso,
+        );
         if (x === null || sharedEnds.has(b.id)) continue;
         sharedEnds.set(b.id, { bookmark: b, x });
       }
@@ -1186,6 +1218,10 @@ export function SensorPlot({
         s.points[0]?.time,
         s.meta.sessionStartTime,
       );
+      const troughForOrigin = detectAhTurnaround(
+        s.points,
+        sessionStartMsForSeries(s),
+      );
       const bookmarks = plotBookmarksForSeries(s).filter(
         (b) => !isComputedEndBookmark(b),
       );
@@ -1196,7 +1232,13 @@ export function SensorPlot({
       const texts: string[] = [];
 
       for (const b of bookmarks) {
-        const x = bookmarkPlotX(b, s.points[0]?.time, mode, startIso);
+        const x = bookmarkPlotX(
+          b,
+          s.points[0]?.time,
+          mode,
+          startIso,
+          troughForOrigin?.troughIso,
+        );
         if (x === null) continue;
 
         const y = metricValueAtBookmark(s.points, b, metrics[0], (() => {
@@ -1275,9 +1317,13 @@ export function SensorPlot({
         ? metrics.length === 1
           ? `${METRIC_LABELS[metrics[0]]} vs Elapsed Time (aligned by session start)`
           : "Absolute Humidity, Relative Humidity & Temperature vs Elapsed Time (aligned by session start)"
-        : metrics.length === 1
-          ? `${METRIC_LABELS[metrics[0]]} vs Time`
-          : "Absolute Humidity, Relative Humidity & Temperature vs Time";
+        : mode === "trough"
+          ? metrics.length === 1
+            ? `${METRIC_LABELS[metrics[0]]} vs Elapsed Time (aligned by AH trough)`
+            : "Absolute Humidity, Relative Humidity & Temperature vs Elapsed Time (aligned by AH trough)"
+          : metrics.length === 1
+            ? `${METRIC_LABELS[metrics[0]]} vs Time`
+            : "Absolute Humidity, Relative Humidity & Temperature vs Time";
 
     const layoutObj: Partial<Layout> = {
       title: {
@@ -1306,7 +1352,9 @@ export function SensorPlot({
           text:
             mode === "aligned"
               ? "Elapsed Time Since Session Start (minutes)"
-              : "Time",
+              : mode === "trough"
+                ? "Elapsed Time Since AH Trough (minutes)"
+                : "Time",
           font: { color: DARK_THEME.text, size: 11 },
         },
         gridcolor: DARK_THEME.gridMajor,
@@ -1336,6 +1384,25 @@ export function SensorPlot({
   // curveNumber order = base traces then bookmark traces
   curveMetaRef.current = [...base.meta, ...bookmarkLayer.meta];
 
+  const originByTrial = useMemo(() => {
+    const map = new Map<string, string | null>();
+    for (const s of series) {
+      if (mode === "trough") {
+        const trough = detectAhTurnaround(
+          s.points,
+          sessionStartMsForSeries(s),
+        );
+        map.set(s.meta.id, trough?.troughIso ?? null);
+      } else {
+        map.set(
+          s.meta.id,
+          sessionStartIso(s.points[0]?.time, s.meta.sessionStartTime),
+        );
+      }
+    }
+    return map;
+  }, [series, mode]);
+
   const handleClick = (e: Readonly<PlotMouseEvent>) => {
     if (!onTimePick) return;
     if (Date.now() < suppressClicksUntilRef.current) return;
@@ -1357,8 +1424,8 @@ export function SensorPlot({
     } else {
       const spikeX = spikeXFromEvent(points, e.event);
       if (spikeX === null) return;
-      const startIso = sessionByTrial.get(m.trialId) ?? null;
-      time = xToClockTime(spikeX, mode, startIso);
+      const originIso = originByTrial.get(m.trialId) ?? null;
+      time = xToClockTime(spikeX, mode, originIso);
     }
     if (!time) return;
     onTimePick({ trialId: m.trialId, time });
@@ -1414,6 +1481,14 @@ export function SensorPlot({
                       Mean Δ{" "}
                       <span className="text-white">
                         {formatSigned(meanDelta)} {row.unit}
+                      </span>
+                    </div>
+                    <div>
+                      ∫A−∫B{" "}
+                      <span className="text-white">
+                        {row.integralDelta == null
+                          ? "—"
+                          : `${formatSigned(row.integralDelta)} ${row.integralUnit}`}
                       </span>
                     </div>
                     <div>

@@ -303,17 +303,21 @@ export function isComputedBookmark(b: TrialBookmark): boolean {
   return isComputedEndBookmark(b) || isComputedStartBookmark(b);
 }
 
-/** Resolve bookmark onto plot x-axis (calendar ISO or aligned minutes). */
+/** Resolve bookmark onto plot x-axis (calendar ISO or elapsed minutes). */
 export function bookmarkPlotX(
   bookmark: TrialBookmark,
   firstSampleIso: string | undefined,
-  mode: "calendar" | "aligned",
+  mode: "calendar" | "aligned" | "trough",
   sessionStart: string | null,
+  /** When mode is trough, minutes are relative to this ISO instant. */
+  troughIso?: string | null,
 ): string | number | null {
   const absoluteIso =
     bookmark.plotIso ?? sessionStartIso(firstSampleIso, bookmark.time);
   if (!absoluteIso) return null;
   if (mode === "calendar") return absoluteIso;
-  if (!sessionStart) return null;
-  return (Date.parse(absoluteIso) - Date.parse(sessionStart)) / 60000;
+  const origin =
+    mode === "trough" ? (troughIso ?? null) : sessionStart;
+  if (!origin) return null;
+  return (Date.parse(absoluteIso) - Date.parse(origin)) / 60000;
 }

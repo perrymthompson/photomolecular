@@ -68,6 +68,7 @@ function AcrossRunsFooter({
         <td className="px-2 py-2.5 font-mono tabular-nums font-semibold text-[#E8C547]">
           {formatSigned(stats.meanDelta)}
         </td>
+        <td className="px-2 py-2.5 text-[#8a8a8d]">—</td>
         <td className="px-2 py-2.5 font-mono tabular-nums">
           {formatSigned(stats.tStatistic, 3)}
         </td>
@@ -93,7 +94,7 @@ function PairRows({
   if (rows.length === 0) {
     return (
       <tr>
-        <td colSpan={8} className="px-2 py-6 text-center text-[#8a8a8d]">
+        <td colSpan={10} className="px-2 py-6 text-center text-[#8a8a8d]">
           {emptyMessage}
         </td>
       </tr>
@@ -116,6 +117,9 @@ function PairRows({
           </td>
           <td className="px-2 py-2 font-mono tabular-nums">
             {formatSigned(row.stats.meanDelta)}
+          </td>
+          <td className="px-2 py-2 font-mono tabular-nums">
+            {row.integralDelta == null ? "—" : formatSigned(row.integralDelta)}
           </td>
           <td className="px-2 py-2 font-mono tabular-nums">
             {formatSigned(row.stats.tStatistic, 3)}
@@ -155,17 +159,18 @@ function ComparisonTable({
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] border-collapse text-left text-xs">
           <thead>
-            <tr className="border-b border-[#3a3b3f] text-[11px] uppercase tracking-wide text-[#8a8a8d]">
-              <th className="px-2 py-2 font-medium">Day</th>
-              <th className="px-2 py-2 font-medium">Run</th>
-              <th className="px-2 py-2 font-medium">{aHeader}</th>
-              <th className="px-2 py-2 font-medium">{bHeader}</th>
-              <th className="px-2 py-2 font-medium">Mean Δ</th>
-              <th className="px-2 py-2 font-medium">t</th>
-              <th className="px-2 py-2 font-medium">p</th>
-              <th className="px-2 py-2 font-medium">95% CI</th>
-              <th className="px-2 py-2 font-medium">n</th>
-            </tr>
+                <tr className="border-b border-[#3a3b3f] text-[11px] uppercase tracking-wide text-[#8a8a8d]">
+                  <th className="px-2 py-2 font-medium">Day</th>
+                  <th className="px-2 py-2 font-medium">Run</th>
+                  <th className="px-2 py-2 font-medium">{aHeader}</th>
+                  <th className="px-2 py-2 font-medium">{bHeader}</th>
+                  <th className="px-2 py-2 font-medium">Mean Δ</th>
+                  <th className="px-2 py-2 font-medium">∫A−∫B</th>
+                  <th className="px-2 py-2 font-medium">t</th>
+                  <th className="px-2 py-2 font-medium">p</th>
+                  <th className="px-2 py-2 font-medium">95% CI</th>
+                  <th className="px-2 py-2 font-medium">n</th>
+                </tr>
           </thead>
           <tbody>
             <PairRows rows={block.rows} emptyMessage={emptyMessage} />
@@ -281,12 +286,11 @@ export function NormRateStatsTable() {
             Norm Rate stats — all runs (excl. X)
           </h2>
           <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#8a8a8d]">
-            Aligned Norm Rate Δ on overlapping time, one-sample t vs 0. Toggle
-            changes the comparison x-origin (session / AH trough / wall clock);
-            Norm Rate y-values still start after each trial’s AH trough. Trough
-            and recording-start clocks are saved to{" "}
-            <span className="text-[#c8c8cb]">data/analysis-time-origins.json</span>{" "}
-            (also <span className="text-[#c8c8cb]">GET /api/trials/time-origins</span>).
+            Aligned Norm Rate Δ on overlapping time, one-sample t vs 0. Also
+            reports ∫A−∫B (trapezoid of each Norm Rate over the overlap, then
+            subtract — equivalent to ∫δ dt). Toggle changes the comparison
+            x-origin. Origins save best-effort to disk locally; on Vercel they
+            are returned in the API response only (read-only FS).
           </p>
         </div>
         <button

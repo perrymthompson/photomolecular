@@ -19,6 +19,9 @@ import { PlotTrialNotes } from "@/components/charts/PlotTrialNotes";
 import { TrialSelector } from "@/components/charts/TrialSelector";
 import { selectionSpansMultipleRuns, sortTrials } from "@/lib/trial-sort";
 import type { MetricKey, PlotMode, TrialMeta, TrialSeries } from "@/types/trial";
+import { isElapsedPlotMode } from "@/types/trial";
+import { detectAhTurnaround } from "@/lib/derived-metrics";
+import { sessionStartIso } from "@/lib/parse-csv";
 
 const PLOT_WORKSPACE_STORAGE_KEY = "plot-workspace-state-v1";
 const TRIALS_PANEL_SIZE_KEY = "plot-trials-panel-size-v1";
@@ -219,7 +222,11 @@ export function PlotWorkspace() {
       const raw = window.sessionStorage.getItem(PLOT_WORKSPACE_STORAGE_KEY);
       if (!raw) return;
       const parsed = JSON.parse(raw) as PersistedPlotWorkspaceState;
-      if (parsed.mode === "calendar" || parsed.mode === "aligned") {
+      if (
+        parsed.mode === "calendar" ||
+        parsed.mode === "aligned" ||
+        parsed.mode === "trough"
+      ) {
         setMode(parsed.mode);
       }
       if (
@@ -371,11 +378,41 @@ export function PlotWorkspace() {
                   : ["absHumidity"];
 
   const alignedReady = series.length > 0 && series.every((s) => s.meta.sessionStartTime);
+  const troughReady = useMemo(() => {
+    if (series.length === 0) return false;
+    return series.every((s) => {
+      const startIso = sessionStartIso(
+        s.points[0]?.time,
+        s.meta.sessionStartTime,
+      );
+      const sessionStartMs = startIso ? Date.parse(startIso) : null;
+      return Boolean(
+        detectAhTurnaround(
+          s.points,
+          Number.isFinite(sessionStartMs) ? sessionStartMs : null,
+        ),
+      );
+    });
+  }, [series]);
   const visibleSeries = useMemo(() => {
     const filtered =
-      isScatterView || mode !== "aligned"
+      isScatterView || mode === "calendar"
         ? series
-        : series.filter((s) => s.meta.sessionStartTime);
+        : mode === "aligned"
+          ? series.filter((s) => s.meta.sessionStartTime)
+          : series.filter((s) => {
+              const startIso = sessionStartIso(
+                s.points[0]?.time,
+                s.meta.sessionStartTime,
+              );
+              const sessionStartMs = startIso ? Date.parse(startIso) : null;
+              return Boolean(
+                detectAhTurnaround(
+                  s.points,
+                  Number.isFinite(sessionStartMs) ? sessionStartMs : null,
+                ),
+              );
+            });
     // Keep trial-selector order so Diff = first selected − second selected.
     const byId = new Map(filtered.map((s) => [s.meta.id, s]));
     const ordered = selectedIds
@@ -561,7 +598,24 @@ export function PlotWorkspace() {
                   : "text-[#b5b5b8] hover:text-white"
               }`}
             >
-              Align session starts
+              Session start
+            </button>
+            <button
+              type="button"
+              onClick={() => setModeAndRefresh("trough")}
+              disabled={!troughReady && series.length > 0}
+              title={
+                troughReady
+                  ? "Align by AH trough (t_start)"
+                  : "AH trough not detected for all selected trials"
+              }
+              className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                mode === "trough"
+                  ? "bg-[#2a2b2e] text-white"
+                  : "text-[#b5b5b8] hover:text-white"
+              }`}
+            >
+              AH trough
             </button>
           </div>
           ) : null}
@@ -738,8 +792,10 @@ export function PlotWorkspace() {
                 )
               ) : (
                 <div className="flex h-[520px] items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
-                  {mode === "aligned" && series.length > 0 && !isScatterView
-                    ? "Selected trials need session start times (set them on Dashboard)."
+                  {isElapsedPlotMode(mode) && series.length > 0 && !isScatterView
+                    ? mode === "trough"
+                      ? "Selected trials need a detectable AH trough (check session starts / early AH data)."
+                      : "Selected trials need session start times (set them on Dashboard)."
                     : "Select one or more trials to plot."}
                 </div>
               )}

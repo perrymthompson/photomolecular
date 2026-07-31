@@ -90,6 +90,45 @@ export function differenceOnSharedX(
 }
 
 /**
+ * Trapezoidal integral of y over x.
+ * When xIsEpochMs, dx is converted to minutes so rate×time units stay consistent.
+ */
+export function trapzIntegral(
+  x: number[],
+  y: number[],
+  xIsEpochMs = false,
+): number | null {
+  if (x.length < 2 || y.length !== x.length) return null;
+  let sum = 0;
+  let any = false;
+  for (let i = 1; i < x.length; i++) {
+    const dxRaw = x[i] - x[i - 1];
+    const dx = xIsEpochMs ? dxRaw / 60_000 : dxRaw;
+    if (!(dx > 0)) continue;
+    const y0 = y[i - 1];
+    const y1 = y[i];
+    if (!Number.isFinite(y0) || !Number.isFinite(y1)) continue;
+    sum += 0.5 * (y0 + y1) * dx;
+    any = true;
+  }
+  return any ? sum : null;
+}
+
+/**
+ * ∫_overlap yA dx − ∫_overlap yB dx on the shared grid
+ * (= ∫ (yA − yB) dx). xIsEpochMs when x is wall-clock ms.
+ */
+export function integralDifferenceOnSharedX(
+  a: NumericSeries,
+  b: NumericSeries,
+  xIsEpochMs = false,
+): number | null {
+  const diff = differenceOnSharedX(a, b);
+  if (!diff) return null;
+  return trapzIntegral(diff.x, diff.y, xIsEpochMs);
+}
+
+/**
  * Running sum of delta: Cumulative_Delta[i] = Σ_{k=0..i} delta[k]
  * (skips non-finite samples without advancing the sum).
  */

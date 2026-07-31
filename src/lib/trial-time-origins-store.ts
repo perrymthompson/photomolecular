@@ -1,6 +1,10 @@
 /**
  * Server-only persistence for trial time origins (AH trough, recording start).
  * Do not import from Client Components — use API routes instead.
+ *
+ * On Vercel the deploy filesystem is read-only (EROFS). We write to /tmp when
+ * available, and never fail the stats API if persistence is impossible —
+ * origins are still returned in the JSON response for the client.
  */
 
 import "server-only";
@@ -12,18 +16,24 @@ import type {
   TrialTimeOriginsFile,
 } from "@/lib/trial-time-origins";
 
-const ORIGINS_PATH = path.join(
-  process.cwd(),
-  "data",
-  "analysis-time-origins.json",
-);
+function originsPath(): string {
+  // Lambda/Vercel: only /tmp is writable.
+  if (process.env.VERCEL || process.env.AWS_LAMBDA_FUNCTION_NAME) {
+    return path.join("/tmp", "analysis-time-origins.json");
+  }
+  return path.join(process.cwd(), "data", "analysis-time-origins.json");
+}
+
+function emptyFile(): TrialTimeOriginsFile {
+  return { version: 1, updatedAt: new Date().toISOString(), byTrialId: {} };
+}
 
 export async function readTrialTimeOriginsFile(): Promise<TrialTimeOriginsFile> {
   try {
-    const raw = await fs.readFile(ORIGINS_PATH, "utf8");
+    const raw = await fs.readFile(originsPath(), "utf8");
     const parsed = JSON.parse(raw) as TrialTimeOriginsFile;
     if (!parsed || typeof parsed !== "object" || !parsed.byTrialId) {
-      return { version: 1, updatedAt: new Date().toISOString(), byTrialId: {} };
+      return emptyFile();
     }
     return {
       version: 1,
@@ -31,7 +41,7 @@ export async function readTrialTimeOriginsFile(): Promise<TrialTimeOriginsFile> 
       byTrialId: parsed.byTrialId,
     };
   } catch {
-    return { version: 1, updatedAt: new Date().toISOString(), byTrialId: {} };
+    return emptyFile();
   }
 }
 
@@ -48,7 +58,21 @@ export async function writeTrialTimeOrigins(
     updatedAt: new Date().toISOString(),
     byTrialId,
   };
-  await fs.mkdir(path.dirname(ORIGINS_PATH), { recursive: true });
-  await fs.writeFile(ORIGINS_PATH, JSON.stringify(next, null, 2), "utf8");
+
+  try {
+    const filePath = originsPath();
+    await fs.mkdir(path.dirname(filePath), { recursive: true });
+    await fs.writeFile(filePath, JSON.stringify(next, null, 2), "utf8");
+  } catch (err) {
+    // EROFS / permission errors must not break Norm Rate stats on Vercel.
+    const code =
+      err && typeof err === "object" && "code" in err
+        ? String((err as { code?: string }).code)
+        : "";
+    if (code !== "EROFS" && code !== "EACCES" && code !== "EPERM") {
+      console.warn("[trial-time-origins-store] write failed:", err);
+    }
+  }
+
   return next;
 }
