@@ -1,10 +1,10 @@
 import { NextResponse } from "next/server";
 import { computeNormRateRunStats } from "@/lib/norm-rate-run-stats";
+import { writeTrialTimeOrigins } from "@/lib/trial-time-origins-store";
 import {
   isNormRateAlignMode,
-  writeTrialTimeOrigins,
   type NormRateAlignMode,
-} from "@/lib/trial-time-origins";
+} from "@/lib/norm-rate-align";
 import { listTrials, loadManySeries } from "@/lib/trials";
 import { parseFilenameParts } from "@/lib/trial-sort";
 

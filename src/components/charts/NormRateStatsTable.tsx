@@ -23,7 +23,7 @@ import type {
 import {
   NORM_RATE_ALIGN_MODES,
   type NormRateAlignMode,
-} from "@/lib/trial-time-origins";
+} from "@/lib/norm-rate-align";
 
 function formatCi(lo: number, hi: number): string {
   return `[${formatSigned(lo)}, ${formatSigned(hi)}]`;

@@ -1,5 +1,5 @@
 import { NextResponse } from "next/server";
-import { readTrialTimeOriginsFile } from "@/lib/trial-time-origins";
+import { readTrialTimeOriginsFile } from "@/lib/trial-time-origins-store";
 
 export const runtime = "nodejs";
 
