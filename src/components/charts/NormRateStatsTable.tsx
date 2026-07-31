@@ -3,6 +3,8 @@
 /**
  * Static tables: Norm Rate comparisons for all non-X runs —
  * Light−Dark, hardware (matched condition), and angle (45° vs 90°).
+ *
+ * Align toggle: session start | AH trough | wall clock — recomputes all Δ grids.
  */
 
 import { useCallback, useEffect, useState } from "react";
@@ -18,10 +20,21 @@ import type {
   NormRateRunStatsResult,
   PairStatRow,
 } from "@/lib/norm-rate-run-stats";
+import {
+  NORM_RATE_ALIGN_MODES,
+  type NormRateAlignMode,
+} from "@/lib/trial-time-origins";
 
 function formatCi(lo: number, hi: number): string {
   return `[${formatSigned(lo)}, ${formatSigned(hi)}]`;
 }
+
+const ALIGN_TOGGLE_LABEL: Record<NormRateAlignMode, string> = {
+  session: "Session start",
+  trough: "AH trough",
+  clock: "Clock time",
+};
+
 
 function chamberCell(chamber: string, plotLabel: string, name: string) {
   const hw = hardwareFromChamber(chamber);
@@ -229,14 +242,15 @@ function WelchSummary({ test }: { test: TwoSampleTTest | null }) {
 }
 
 export function NormRateStatsTable() {
+  const [alignMode, setAlignMode] = useState<NormRateAlignMode>("session");
   const [data, setData] = useState<NormRateRunStatsResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
 
-  const load = useCallback(() => {
+  const load = useCallback((mode: NormRateAlignMode) => {
     setLoading(true);
     setError(null);
-    fetch("/api/trials/norm-rate-stats")
+    fetch(`/api/trials/norm-rate-stats?align=${mode}`)
       .then(async (r) => {
         const body = (await r.json()) as
           | NormRateRunStatsResult
@@ -256,8 +270,8 @@ export function NormRateStatsTable() {
   }, []);
 
   useEffect(() => {
-    load();
-  }, [load]);
+    load(alignMode);
+  }, [alignMode, load]);
 
   return (
     <section className="rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
@@ -267,21 +281,58 @@ export function NormRateStatsTable() {
             Norm Rate stats — all runs (excl. X)
           </h2>
           <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#8a8a8d]">
-            Aligned Norm Rate Δ on overlapping elapsed time, one-sample t vs 0
-            (same method as plot Diff). Extra blocks separate{" "}
-            <span className="text-[#c8c8cb]">hardware</span> (ch1/New vs
-            ch2/Old) from <span className="text-[#c8c8cb]">angle</span> (45° vs
-            90°).
+            Aligned Norm Rate Δ on overlapping time, one-sample t vs 0. Toggle
+            changes the comparison x-origin (session / AH trough / wall clock);
+            Norm Rate y-values still start after each trial’s AH trough. Trough
+            and recording-start clocks are saved to{" "}
+            <span className="text-[#c8c8cb]">data/analysis-time-origins.json</span>{" "}
+            (also <span className="text-[#c8c8cb]">GET /api/trials/time-origins</span>).
           </p>
         </div>
         <button
           type="button"
-          onClick={load}
+          onClick={() => load(alignMode)}
           disabled={loading}
           className="rounded border border-[#3a3b3f] px-3 py-1.5 text-xs text-[#c8c8cb] hover:border-[#5a5b5f] hover:text-white disabled:opacity-50"
         >
           {loading ? "Computing…" : "Refresh"}
         </button>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-b border-[#3a3b3f] px-4 py-2">
+        <span className="text-[11px] uppercase tracking-wide text-[#8a8a8d]">
+          Align by
+        </span>
+        <div className="flex rounded border border-[#3a3b3f] p-0.5">
+          {NORM_RATE_ALIGN_MODES.map((mode) => (
+            <button
+              key={mode}
+              type="button"
+              disabled={loading}
+              onClick={() => setAlignMode(mode)}
+              title={
+                mode === "session"
+                  ? "x = minutes since sessionStartTime"
+                  : mode === "trough"
+                    ? "x = minutes since AH trough (t_start)"
+                    : "x = absolute UTC time (wall clock overlap)"
+              }
+              className={`rounded px-3 py-1.5 text-xs disabled:opacity-50 ${
+                alignMode === mode
+                  ? "bg-[#2a2b2e] text-white"
+                  : "text-[#b5b5b8] hover:text-white"
+              }`}
+            >
+              {ALIGN_TOGGLE_LABEL[mode]}
+            </button>
+          ))}
+        </div>
+        {data ? (
+          <span className="text-[11px] text-[#8a8a8d]">
+            Active:{" "}
+            <span className="text-[#E8C547]">{data.alignModeLabel}</span>
+          </span>
+        ) : null}
       </div>
 
       {error ? (
@@ -296,7 +347,7 @@ export function NormRateStatsTable() {
       ) : null}
 
       {data ? (
-        <div className="space-y-8 px-4 py-4">
+        <div className={`space-y-8 px-4 py-4 ${loading ? "opacity-60" : ""}`}>
           <div className="flex flex-wrap gap-3 text-[11px] text-[#8a8a8d]">
             <span>
               Trials loaded:{" "}
@@ -314,7 +365,51 @@ export function NormRateStatsTable() {
               Excluded X:{" "}
               <span className="text-[#c8c8cb]">{data.summary.excludedX}</span>
             </span>
+            <span>
+              Origins saved:{" "}
+              <span className="text-[#c8c8cb]">{data.origins.length}</span>
+            </span>
           </div>
+
+          <details className="text-xs text-[#8a8a8d]">
+            <summary className="cursor-pointer hover:text-[#c8c8cb]">
+              Saved start times (session / AH trough / recording) —{" "}
+              {data.origins.length} trials
+            </summary>
+            <div className="mt-2 max-h-48 overflow-auto">
+              <table className="w-full min-w-[640px] border-collapse text-left text-[11px]">
+                <thead>
+                  <tr className="border-b border-[#3a3b3f] text-[#8a8a8d]">
+                    <th className="px-2 py-1 font-medium">File</th>
+                    <th className="px-2 py-1 font-medium">Session</th>
+                    <th className="px-2 py-1 font-medium">AH trough</th>
+                    <th className="px-2 py-1 font-medium">Recording start</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {data.origins.map((o) => (
+                    <tr
+                      key={o.trialId}
+                      className="border-b border-[#2a2b2e] text-[#c8c8cb]"
+                    >
+                      <td className="px-2 py-1 whitespace-nowrap">
+                        {o.filename.replace(/\.csv$/i, "")}
+                      </td>
+                      <td className="px-2 py-1 font-mono">
+                        {o.sessionStartTime ?? "—"}
+                      </td>
+                      <td className="px-2 py-1 font-mono text-[#E8C547]">
+                        {o.ahTroughTime ?? "—"}
+                      </td>
+                      <td className="px-2 py-1 font-mono">
+                        {o.recordingStartTime ?? "—"}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </details>
 
           <ComparisonTable
             block={data.lightMinusDark}

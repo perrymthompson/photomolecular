@@ -1,17 +1,16 @@
 /**
  * Cross-run Norm Rate comparisons (all days, excluding Run X).
  *
- * Blocks
- * ------
- * 1. Light − Dark (per run) — may confound light with hardware
- * 2. Same split by which chamber got Light (ch1/New vs ch2/Old)
- * 3. Hardware: ch1 − ch2 when both chambers share the same condition
- * 4. Angle: 45° − 90° when a run has both Light angles
- * 5. Light−Dark subset by Light angle + Welch test of mean Δ (45 vs 90)
+ * Alignment (`NormRateAlignMode`) changes the *pairing x-axis only*:
+ *   session — minutes since sessionStartTime
+ *   trough  — minutes since AH trough (t_start)
+ *   clock   — absolute epoch ms (wall clock)
+ *
+ * Norm Rate y-values always use: session floor → detect trough → rates after
+ * trough / VPD_fit (same as the plot Norm Rate metric).
  */
 
 import {
-  detectAhTurnaround,
   normRateSeries,
 } from "@/lib/derived-metrics";
 import {
@@ -25,16 +24,20 @@ import {
   lightAngleFromPlotLabel,
   lightConditionFromPlotLabel,
 } from "@/lib/plot-label";
-import { sessionStartIso } from "@/lib/parse-csv";
 import { differenceOnSharedX } from "@/lib/series-diff";
 import { parseFilenameParts } from "@/lib/trial-sort";
+import {
+  alignModeLabel,
+  computeTrialTimeOrigins,
+  type NormRateAlignMode,
+  type TrialTimeOrigins,
+} from "@/lib/trial-time-origins";
 import type { TrialSeries } from "@/types/trial";
 
 export type PairStatRow = {
   dayKey: string;
   runKey: string;
   runLetter: string;
-  /** Positive side of Δ (A in A − B). */
   aId: string;
   bId: string;
   aName: string;
@@ -43,7 +46,6 @@ export type PairStatRow = {
   bChamber: string;
   aPlotLabel: string;
   bPlotLabel: string;
-  /** Optional tags for filtering / display. */
   tags: {
     lightAngle?: number | null;
     lightChamber?: string;
@@ -79,20 +81,17 @@ export type NormRateRunStatRow = {
 };
 
 export type NormRateRunStatsResult = {
+  alignMode: NormRateAlignMode;
+  alignModeLabel: string;
+  /** Per-trial session / AH-trough / recording-start clocks used for this run. */
+  origins: TrialTimeOrigins[];
   lightMinusDark: ComparisonBlock;
-  /** Light−Dark when Light was on ch1 (New). */
   lightOnCh1: ComparisonBlock;
-  /** Light−Dark when Light was on ch2 (Old). */
   lightOnCh2: ComparisonBlock;
-  /** ch1 − ch2 with matched Light or matched Dark. */
   hardwareMatched: ComparisonBlock;
-  /** 45° − 90° within runs that have both Light angles. */
   angle45Minus90: ComparisonBlock;
-  /** Light−Dark restricted to Light @ 45°. */
   lightDarkAngle45: ComparisonBlock;
-  /** Light−Dark restricted to Light @ 90°. */
   lightDarkAngle90: ComparisonBlock;
-  /** Welch test: mean(Light−Dark|45°) vs mean(Light−Dark|90°) across runs. */
   angleEffectWelch: TwoSampleTTest | null;
   summary: {
     trialCount: number;
@@ -100,7 +99,6 @@ export type NormRateRunStatsResult = {
     compared: number;
     excludedX: number;
   };
-  /** Convenience mirrors for the original table. */
   rows: NormRateRunStatRow[];
   acrossRuns: DiffSeriesStats | null;
   skipped: { dayKey: string; runKey: string; reason: string }[];
@@ -113,23 +111,26 @@ function trialShortName(s: TrialSeries): string {
 }
 
 /**
- * Aligned Norm Rate series: x = minutes since session start, y = Norm_Rate.
+ * Build Norm Rate series on the comparison x-axis for `alignMode`.
+ *
+ * y = NormRate (post-trough); x depends on mode (see module header).
  */
 export function alignedNormRateSeries(
   s: TrialSeries,
+  alignMode: NormRateAlignMode = "session",
+  origins?: TrialTimeOrigins,
 ): { x: number[]; y: number[]; label: string } | null {
-  const startIso = sessionStartIso(
-    s.points[0]?.time,
-    s.meta.sessionStartTime,
-  );
-  if (!startIso) return null;
-  const startMs = Date.parse(startIso);
-  if (!Number.isFinite(startMs)) return null;
+  const o = origins ?? computeTrialTimeOrigins(s);
+  const sessionStartMs = o.sessionStartMs;
+  const troughMs = o.ahTroughMs;
 
-  const trough = detectAhTurnaround(s.points, startMs);
+  // Session mode needs a session clock; trough mode needs a detected trough.
+  if (alignMode === "session" && sessionStartMs == null) return null;
+  if (alignMode === "trough" && troughMs == null) return null;
+
   const ys = normRateSeries(s.points, Infinity, {
-    sessionStartMs: startMs,
-    readyAfterMs: trough?.troughMs ?? null,
+    sessionStartMs,
+    readyAfterMs: troughMs,
   });
 
   const x: number[] = [];
@@ -138,7 +139,17 @@ export function alignedNormRateSeries(
     if (!Number.isFinite(ys[i])) continue;
     const tMs = Date.parse(s.points[i].time);
     if (!Number.isFinite(tMs)) continue;
-    x.push((tMs - startMs) / 60_000);
+
+    let xv: number;
+    if (alignMode === "clock") {
+      xv = tMs;
+    } else if (alignMode === "trough") {
+      xv = (tMs - troughMs!) / 60_000;
+    } else {
+      xv = (tMs - sessionStartMs!) / 60_000;
+    }
+    if (!Number.isFinite(xv)) continue;
+    x.push(xv);
     y.push(ys[i]);
   }
   if (x.length < 2) return null;
@@ -207,19 +218,34 @@ function finalizeBlock(block: ComparisonBlock): ComparisonBlock {
   return block;
 }
 
+function missingOriginReason(mode: NormRateAlignMode): string {
+  if (mode === "session") return "Missing session start time";
+  if (mode === "trough") return "AH trough not detected";
+  return "Too few Norm Rate samples";
+}
+
 function tryPairStats(
   a: TrialSeries,
   b: TrialSeries,
   g: RunGroup,
+  alignMode: NormRateAlignMode,
+  originsById: Map<string, TrialTimeOrigins>,
   tags: PairStatRow["tags"] = {},
 ): { row: PairStatRow } | { reason: string } {
-  const aXY = alignedNormRateSeries(a);
-  const bXY = alignedNormRateSeries(b);
+  const aXY = alignedNormRateSeries(a, alignMode, originsById.get(a.meta.id));
+  const bXY = alignedNormRateSeries(b, alignMode, originsById.get(b.meta.id));
   if (!aXY || !bXY) {
-    return { reason: "Missing session start or too few Norm Rate samples" };
+    return { reason: missingOriginReason(alignMode) };
   }
   const diff = differenceOnSharedX(aXY, bXY);
-  if (!diff) return { reason: "No overlapping aligned time range" };
+  if (!diff) {
+    return {
+      reason:
+        alignMode === "clock"
+          ? "No overlapping wall-clock time range"
+          : "No overlapping aligned time range",
+    };
+  }
   const stats = diffSeriesStats(diff.y);
   if (!stats) return { reason: "Insufficient finite Δ samples for t-test" };
   return {
@@ -241,10 +267,6 @@ function tryPairStats(
   };
 }
 
-/**
- * Pick one Light and one Dark trial in a run.
- * Prefers opposite chambers (typical ch1 Light vs ch2 Dark).
- */
 export function pickLightDarkPair(
   series: TrialSeries[],
 ): { light: TrialSeries; dark: TrialSeries } | null {
@@ -280,8 +302,12 @@ function pickAnglePair(
   const lights = series.filter(
     (s) => lightConditionFromPlotLabel(s.meta.plotLabel) === "light",
   );
-  const deg45 = lights.find((s) => lightAngleFromPlotLabel(s.meta.plotLabel) === 45);
-  const deg90 = lights.find((s) => lightAngleFromPlotLabel(s.meta.plotLabel) === 90);
+  const deg45 = lights.find(
+    (s) => lightAngleFromPlotLabel(s.meta.plotLabel) === 45,
+  );
+  const deg90 = lights.find(
+    (s) => lightAngleFromPlotLabel(s.meta.plotLabel) === 90,
+  );
   if (!deg45 || !deg90) return null;
   return { deg45, deg90 };
 }
@@ -304,52 +330,66 @@ function toLegacyRow(row: PairStatRow): NormRateRunStatRow {
   };
 }
 
+function alignNote(mode: NormRateAlignMode): string {
+  switch (mode) {
+    case "session":
+      return "X = minutes since each trial’s session start.";
+    case "trough":
+      return "X = minutes since each trial’s AH trough (t_start).";
+    case "clock":
+      return "X = wall-clock UTC; overlap only where both CSVs share the same absolute time.";
+  }
+}
+
 /**
  * Compute all Norm Rate comparison blocks for non-X day/run groups.
  */
 export function computeNormRateRunStats(
   allSeries: TrialSeries[],
+  alignMode: NormRateAlignMode = "session",
 ): NormRateRunStatsResult {
+  const origins = allSeries.map(computeTrialTimeOrigins);
+  const originsById = new Map(origins.map((o) => [o.trialId, o]));
   const { groups, excludedX } = groupNonXByDayRun(allSeries);
+  const xNote = alignNote(alignMode);
 
   const lightMinusDark = emptyBlock(
     "Light − Dark",
     "Light − Dark",
-    "Within each run: aligned Norm Rate Δ. Confounds light with hardware when chambers differ.",
+    `Within each run: Norm Rate Δ on the ${alignModeLabel(alignMode)} grid. ${xNote} Confounds light with hardware when chambers differ.`,
   );
   const lightOnCh1 = emptyBlock(
     "Light − Dark (Light on ch1 / New)",
     "Light − Dark",
-    "Subset where Light was on ch1 (New) and Dark typically on ch2 (Old).",
+    `Subset where Light was on ch1 (New). ${xNote}`,
   );
   const lightOnCh2 = emptyBlock(
     "Light − Dark (Light on ch2 / Old)",
     "Light − Dark",
-    "Subset where Light was on ch2 (Old) and Dark typically on ch1 (New). Compare to the ch1 subset: same sign ⇒ light not an artifact of hardware assignment.",
+    `Subset where Light was on ch2 (Old). ${xNote}`,
   );
   const hardwareMatched = emptyBlock(
     "Hardware: ch1 − ch2 (matched condition)",
     "ch1 (New) − ch2 (Old)",
-    "Only runs where both chambers share Light or both share Dark (angles may differ for Light). Isolates hardware / sensor offset.",
+    `Same Light or same Dark on both chambers. ${xNote}`,
   );
   const angle45Minus90 = emptyBlock(
     "Angle: 45° − 90° (both Light)",
     "Light 45° − Light 90°",
-    "Runs with both illumination angles (no Dark in the pair). Isolates angle when chambers differ.",
+    `Runs with both illumination angles. ${xNote}`,
   );
   const lightDarkAngle45 = emptyBlock(
     "Light − Dark @ 45°",
     "Light(45°) − Dark",
-    "Light−Dark pairs where the Light trial is labeled 45°.",
+    `Light−Dark where Light is 45°. ${xNote}`,
   );
   const lightDarkAngle90 = emptyBlock(
     "Light − Dark @ 90°",
     "Light(90°) − Dark",
-    "Light−Dark pairs where the Light trial is labeled 90°.",
+    `Light−Dark where Light is 90°. ${xNote}`,
   );
 
   for (const g of groups) {
-    // --- Light − Dark ---
     const ld = pickLightDarkPair(g.series);
     if (!ld) {
       lightMinusDark.skipped.push({
@@ -359,10 +399,17 @@ export function computeNormRateRunStats(
       });
     } else {
       const angle = lightAngleFromPlotLabel(ld.light.meta.plotLabel);
-      const result = tryPairStats(ld.light, ld.dark, g, {
-        lightAngle: angle,
-        lightChamber: ld.light.meta.label,
-      });
+      const result = tryPairStats(
+        ld.light,
+        ld.dark,
+        g,
+        alignMode,
+        originsById,
+        {
+          lightAngle: angle,
+          lightChamber: ld.light.meta.label,
+        },
+      );
       if ("reason" in result) {
         lightMinusDark.skipped.push({
           dayKey: g.dayKey,
@@ -374,13 +421,11 @@ export function computeNormRateRunStats(
         const chamber = ld.light.meta.label.trim().toLowerCase();
         if (chamber === "ch1") lightOnCh1.rows.push(result.row);
         else if (chamber === "ch2") lightOnCh2.rows.push(result.row);
-
         if (angle === 45) lightDarkAngle45.rows.push(result.row);
         else if (angle === 90) lightDarkAngle90.rows.push(result.row);
       }
     }
 
-    // --- Hardware matched condition: ch1 − ch2 ---
     const { ch1, ch2 } = pickChambers(g.series);
     if (!ch1 || !ch2) {
       hardwareMatched.skipped.push({
@@ -405,9 +450,7 @@ export function computeNormRateRunStats(
                 lightAngleFromPlotLabel(ch2.meta.plotLabel)
               ? ("light" as const)
               : ("mixed-light" as const);
-        // Allow both-Light even if angles differ — still same “light on” hardware probe;
-        // tag mixed-light so the table can show it.
-        const result = tryPairStats(ch1, ch2, g, {
+        const result = tryPairStats(ch1, ch2, g, alignMode, originsById, {
           matchedCondition: matched,
         });
         if ("reason" in result) {
@@ -422,7 +465,6 @@ export function computeNormRateRunStats(
       }
     }
 
-    // --- Angle 45 − 90 ---
     const angles = pickAnglePair(g.series);
     if (!angles) {
       angle45Minus90.skipped.push({
@@ -431,9 +473,14 @@ export function computeNormRateRunStats(
         reason: "No Light 45° and Light 90° pair",
       });
     } else {
-      const result = tryPairStats(angles.deg45, angles.deg90, g, {
-        lightAngle: 45,
-      });
+      const result = tryPairStats(
+        angles.deg45,
+        angles.deg90,
+        g,
+        alignMode,
+        originsById,
+        { lightAngle: 45 },
+      );
       if ("reason" in result) {
         angle45Minus90.skipped.push({
           dayKey: g.dayKey,
@@ -459,9 +506,10 @@ export function computeNormRateRunStats(
     lightDarkAngle90.rows.map((r) => r.stats.meanDelta),
   );
 
-  const rows = lightMinusDark.rows.map(toLegacyRow);
-
   return {
+    alignMode,
+    alignModeLabel: alignModeLabel(alignMode),
+    origins,
     lightMinusDark,
     lightOnCh1,
     lightOnCh2,
@@ -476,7 +524,7 @@ export function computeNormRateRunStats(
       compared: lightMinusDark.rows.length,
       excludedX,
     },
-    rows,
+    rows: lightMinusDark.rows.map(toLegacyRow),
     acrossRuns: lightMinusDark.acrossRuns,
     skipped: lightMinusDark.skipped,
   };
