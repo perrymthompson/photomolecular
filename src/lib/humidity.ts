@@ -103,6 +103,7 @@ export function actualVaporPressureKPa(rh: number, tempC: number): number {
  * USED BY: EvapRateVsVpdPlot (x-axis), Norm Rate (denominator)
  */
 export function vaporPressureDeficitKPa(rh: number, tempC: number): number {
+  if (!Number.isFinite(rh) || !Number.isFinite(tempC)) return Number.NaN;
   const psat = saturationVaporPressureKPa(tempC);
   return psat - psat * (rh / 100);
 }

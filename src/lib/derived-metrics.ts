@@ -7,32 +7,38 @@
  * SMOOTHING POLICY (Norm / Evap analysis)
  * ---------------------------------------
  *   AH_raw     = Magnus(RH_raw, T_raw)          // parse-csv / humidity.ts
- *   AH_fit     = LOWESS(time, AH_raw)
- *   AH_rate    = (AH_fit_i − AH_fit_{i−1}) / Δt_minutes
+ *   AH_fit     = applyLoessAndTrim(time, AH_raw)  // edges → NaN
+ *   AH_rate    = Δ AH_fit / Δt; then edge-trim again (derivative bias)
  *
- *   RH_fit     = LOWESS(time, RH_raw)
- *   T_fit      = LOWESS(time, T_raw)
+ *   RH_fit     = applyLoessAndTrim(time, RH_raw)
+ *   T_fit      = applyLoessAndTrim(time, T_raw)
  *   VPD_fit    = Tetens(RH_fit, T_fit)          // NOT LOESS(VPD_raw)
- *   Norm_Rate  = AH_rate / VPD_fit
+ *   Norm_Rate  = AH_rate / VPD_fit              // NaN where either side is
  *
- * Trough t_start = argmin of AH_fit in [sessionStart, sessionStart+40 min].
+ * Trough t_start = argmin of AH_fit in [sessionStart, sessionStart+40 min]
+ * (skips non-finite / edge-trimmed samples).
  *
  * FILE MAP
  * --------
  * | Quantity     | Function              | Notes                                      |
  * |--------------|-----------------------|--------------------------------------------|
  * | AH raw       | humidity + parse-csv  | stored on SensorPoint.absHumidity          |
- * | AH fit       | lowessPreserveOrder   | same span as SensorPlot Fit                |
+ * | AH fit       | applyLoessAndTrim     | LOESS + ~3% edge blank                     |
  * | t_start      | detectAhTurnaround    | min of LOESS(AH) in 0–40 min window        |
- * | AH_rate      | ahRateSeries          | Δ LOESS(AH) / Δt; post-trough              |
+ * | AH_rate      | ahRateSeries          | Δ LOESS(AH)/Δt; post-trough; edge-trimmed  |
  * | VPD raw      | vpdSeries(smooth:false) | Tetens(RH_raw, T_raw)                    |
- * | VPD fit      | vpdSeries(smooth:true)  | Tetens(LOESS(RH), LOESS(T))              |
+ * | VPD fit      | vpdSeries(smooth:true)  | Tetens(LOESS(RH), LOESS(T)); edges NaN  |
  * | Norm_Rate    | normRateSeries        | AH_rate / VPD_fit                          |
  * =============================================================================
  */
 
 import { vaporPressureDeficitKPa } from "./humidity";
-import { LOWESS_SPAN, lowessPreserveOrder } from "./lowess";
+import {
+  applyLoessAndTrim,
+  LOESS_EDGE_TRIM_FRAC,
+  LOWESS_SPAN,
+  maskLoessBoundaryArtifacts,
+} from "./lowess";
 import type { SensorPoint } from "@/types/trial";
 
 /** Elapsed-minute search window after session start for AH trough. */
@@ -73,6 +79,9 @@ export const NORM_RATE_Y_RANGE: [number, number] = [-2, 2];
 
 /** Span used for analysis LOESS — must match SensorPlot Fit curves. */
 export const ANALYSIS_LOWESS_SPAN = LOWESS_SPAN;
+
+/** Edge blank fraction after LOESS / LOESS-based derivatives. */
+export const ANALYSIS_LOESS_EDGE_TRIM_FRAC = LOESS_EDGE_TRIM_FRAC;
 
 export type AhRateOptions = {
   /**
@@ -159,8 +168,8 @@ function elapsedOriginMs(
 }
 
 /**
- * LOESS-smoothed Absolute Humidity in original sample order.
- * This is the curve SensorPlot Fit draws for AH (same span).
+ * LOESS-smoothed Absolute Humidity in original sample order (edges NaN).
+ * This is the curve SensorPlot Fit draws for AH (same span + trim).
  */
 export function ahLowessSeries(
   points: SensorPoint[],
@@ -168,7 +177,7 @@ export function ahLowessSeries(
 ): number[] {
   const times = points.map((p) => Date.parse(p.time));
   const ahs = points.map((p) => p.absHumidity);
-  return lowessPreserveOrder(times, ahs, span);
+  return applyLoessAndTrim(times, ahs, span);
 }
 
 /**
@@ -199,7 +208,7 @@ export function detectAhTurnaround(
   if (floorMs == null) return null;
 
   const ahs = points.map((p) => p.absHumidity);
-  const smoothed = lowessPreserveOrder(times, ahs, ANALYSIS_LOWESS_SPAN);
+  const smoothed = applyLoessAndTrim(times, ahs, ANALYSIS_LOWESS_SPAN);
   const searchEndMs = floorMs + searchMinutes * 60_000;
 
   let bestIdx = -1;
@@ -281,8 +290,9 @@ function maskBeforeReady(
 /**
  * Absolute humidity rate from the LOESS AH curve [g/m³/min].
  *
- *   AH_fit_i = LOWESS(t, AH_raw)
+ *   AH_fit_i = applyLoessAndTrim(t, AH_raw)
  *   AH_rate_i = (AH_fit_i − AH_fit_{i−1}) / Δt_min
+ *   then blank LOESS-scale edges again (derivatives amplify residual bias)
  *
  * Samples before t_start are NaN. No sign filter.
  */
@@ -297,7 +307,7 @@ export function ahRateSeries(
 
   const times = points.map((p) => Date.parse(p.time));
   const readyAfterMs = resolveReadyAfterMs(points, options);
-  const ahSmoothed = lowessPreserveOrder(
+  const ahSmoothed = applyLoessAndTrim(
     times,
     points.map((p) => p.absHumidity),
     ANALYSIS_LOWESS_SPAN,
@@ -317,7 +327,10 @@ export function ahRateSeries(
     out[i] = (a1 - a0) / dtMin;
   }
 
-  return maskBeforeReady(out, times, readyAfterMs);
+  return maskLoessBoundaryArtifacts(
+    maskBeforeReady(out, times, readyAfterMs),
+    ANALYSIS_LOESS_EDGE_TRIM_FRAC,
+  );
 }
 
 /**
@@ -345,16 +358,17 @@ export function vpdSeries(
   let vpds: number[];
 
   if (options.smooth) {
-    const rhFit = lowessPreserveOrder(
+    const rhFit = applyLoessAndTrim(
       times,
       points.map((p) => p.rh),
       ANALYSIS_LOWESS_SPAN,
     );
-    const tFit = lowessPreserveOrder(
+    const tFit = applyLoessAndTrim(
       times,
       points.map((p) => p.temp),
       ANALYSIS_LOWESS_SPAN,
     );
+    // Tetens of edge-NaN RH/T stays NaN — Plotly drops those points.
     vpds = rhFit.map((rh, i) => vaporPressureDeficitKPa(rh, tFit[i]));
   } else {
     vpds = points.map((p) => vaporPressureDeficitKPa(p.rh, p.temp));

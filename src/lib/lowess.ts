@@ -10,42 +10,85 @@
  * 2. Analysis pipeline in derived-metrics.ts:
  *      - AH trough (t_start) from LOESS(AH)
  *      - AH_rate = Δ LOESS(AH) / Δt
- *      - LOESS(VPD) for Evap-vs-VPD x-axis and Norm_Rate denominator
+ *      - LOESS(RH), LOESS(T) → Tetens VPD for Norm / Evap-vs-VPD
  *
  * SPAN (LOWESS_SPAN)
  * ------------------
  * Fraction of points in each local window. Smaller → hugs raw data more;
  * larger → smoother but can LAG sharp drops (lid-placement AH plunge).
- * Default 0.02 tracks chamber drops much better than the old 0.08 (R lab
- * script used 0.08 for overview plots; analysis needs a tighter fit).
+ * Default 0.02 tracks chamber drops much better than the old 0.08.
+ *
+ * EDGE TRIM (LOESS_EDGE_TRIM_FRAC)
+ * --------------------------------
+ * LOESS windows are asymmetric near the start/end of a series, which creates
+ * boundary distortion (edge bias). That bias is amplified by derivatives
+ * (dAH/dt spikes at the ends). After every LOESS fit we set the first and
+ * last ~trimFrac of points to NaN so Plotly / downstream charts drop them.
  *
  * VERIFY: with Fit on, the thick AH curve should sit on the faint raw cloud
- * through the initial drop, not trail above it for several minutes.
+ * through the initial drop, not trail above it — and dAH/dt should not spike
+ * artificially at the very start or end of a trial.
  * =============================================================================
  */
 
 export type LowessResult = {
   /** Sorted x (same permutation as y). */
   x: number[];
-  /** Fitted y in sorted-x order. */
+  /** Fitted y in sorted-x order (edges NaN-masked). */
   y: number[];
-  /** Fitted y aligned to the ORIGINAL input index order. */
+  /** Fitted y aligned to the ORIGINAL input index order (edges NaN-masked). */
   yOriginalOrder: number[];
 };
 
 /**
- * LOWESS / locally weighted regression (Cleveland).
+ * Default span for display + analysis.
+ * 0.02 ≈ 2% of points in each neighborhood (tracks sharp AH drops).
+ */
+export const LOWESS_SPAN = 0.02;
+
+/**
+ * Fraction of the fitted series length blanked at each end after LOESS.
+ * Matches the LOESS window scale (~2–5%); 3% clears asymmetric-window bias
+ * without removing too much usable interior.
+ */
+export const LOESS_EDGE_TRIM_FRAC = 0.03;
+
+/**
+ * Set first/last ~trimFrac of points to NaN (LOESS boundary distortion).
+ * If the series is too short for a meaningful interior, all values become NaN.
+ */
+export function maskLoessBoundaryArtifacts(
+  values: number[],
+  trimFrac: number = LOESS_EDGE_TRIM_FRAC,
+): number[] {
+  const n = values.length;
+  if (n === 0) return [];
+  const k = Math.max(1, Math.floor(n * trimFrac));
+  const out = values.slice();
+  if (2 * k >= n) {
+    out.fill(Number.NaN);
+    return out;
+  }
+  for (let i = 0; i < k; i++) out[i] = Number.NaN;
+  for (let i = n - k; i < n; i++) out[i] = Number.NaN;
+  return out;
+}
+
+/**
+ * LOWESS / locally weighted regression (Cleveland), then edge-trim.
  * Span is a fraction of points in the window (matches R loess `span`).
  */
 export function lowess(
   x: number[],
   y: number[],
   span = LOWESS_SPAN,
+  trimFrac = LOESS_EDGE_TRIM_FRAC,
 ): LowessResult {
   const n = x.length;
   if (n === 0) return { x: [], y: [], yOriginalOrder: [] };
   if (n < 3) {
-    return { x: [...x], y: [...y], yOriginalOrder: [...y] };
+    const masked = maskLoessBoundaryArtifacts([...y], trimFrac);
+    return { x: [...x], y: masked, yOriginalOrder: [...masked] };
   }
 
   // Sort by x so neighborhoods are contiguous along the time axis.
@@ -56,7 +99,6 @@ export function lowess(
   // Window size in number of points (at least 2).
   const r = Math.max(2, Math.floor(span * n));
   const fittedSorted = new Array<number>(n);
-  const yOriginalOrder = new Array<number>(n);
 
   for (let i = 0; i < n; i++) {
     // Expand [left, right] until it covers ~r points around i.
@@ -98,20 +140,28 @@ export function lowess(
       yi = meanY + slope * (xs[i] - meanX);
     }
     fittedSorted[i] = yi;
-    yOriginalOrder[order[i]] = yi;
   }
 
-  return { x: xs, y: fittedSorted, yOriginalOrder };
+  // Blank LOESS edge-bias zones so plots / derivatives never show them.
+  const yTrimmed = maskLoessBoundaryArtifacts(fittedSorted, trimFrac);
+  const yOriginalOrder = new Array<number>(n);
+  for (let i = 0; i < n; i++) {
+    yOriginalOrder[order[i]] = yTrimmed[i];
+  }
+
+  return { x: xs, y: yTrimmed, yOriginalOrder };
 }
 
 /**
- * Convenience: LOESS fitted values in the same index order as the inputs.
- * Non-finite (x,y) pairs are skipped in the fit and left as NaN in the output.
+ * Convenience: LOESS fitted values in the same index order as the inputs,
+ * with boundary points NaN-masked. Non-finite (x,y) pairs are skipped in the
+ * fit and left as NaN in the output.
  */
 export function lowessPreserveOrder(
   x: number[],
   y: number[],
   span = LOWESS_SPAN,
+  trimFrac = LOESS_EDGE_TRIM_FRAC,
 ): number[] {
   const n = x.length;
   const out = new Array<number>(n).fill(Number.NaN);
@@ -128,7 +178,7 @@ export function lowessPreserveOrder(
   }
   if (xf.length === 0) return out;
 
-  const { yOriginalOrder } = lowess(xf, yf, span);
+  const { yOriginalOrder } = lowess(xf, yf, span, trimFrac);
   for (let k = 0; k < idx.length; k++) {
     out[idx[k]] = yOriginalOrder[k];
   }
@@ -136,8 +186,15 @@ export function lowessPreserveOrder(
 }
 
 /**
- * Default span for display + analysis.
- * 0.02 ≈ 2% of points in each neighborhood (tracks sharp AH drops).
- * Old value 0.08 lagged the lid-placement plunge on chamber trials.
+ * Apply LOESS then trim boundary artifacts (explicit pipeline helper).
+ * Equivalent to lowessPreserveOrder; preferred name at call sites that want
+ * the trim contract to be obvious.
  */
-export const LOWESS_SPAN = 0.02;
+export function applyLoessAndTrim(
+  x: number[],
+  y: number[],
+  span = LOWESS_SPAN,
+  trimFrac = LOESS_EDGE_TRIM_FRAC,
+): number[] {
+  return lowessPreserveOrder(x, y, span, trimFrac);
+}

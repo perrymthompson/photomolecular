@@ -16,14 +16,15 @@
  *        (analysis uses LOESS with the same span as Fit curves below)
  *   4. This file         → draws time-series; calls metricSeries() which
  *                          dispatches to derived-metrics for ahRate/vpd/normRate
- *   5. Display Fit       → src/lib/lowess.ts (LOWESS_SPAN) — same smoother as analysis
+ *   5. Display Fit       → src/lib/lowess.ts (LOWESS_SPAN) — same smoother as analysis;
+ *                          first/last ~3% of each LOESS fit are NaN (edge-bias blank)
  *
  * METRICS (computation location):
- *   - absHumidity  humidity.ts via parse-csv (stored). Fit = LOESS(AH).
- *   - rh, temp     CSV fields. Fit = LOESS of that field.
- *   - ahRate       Δ LOESS(AH) / Δt after trough (derived-metrics.ahRateSeries)
+ *   - absHumidity  humidity.ts via parse-csv (stored). Fit = LOESS(AH) + edge trim.
+ *   - rh, temp     CSV fields. Fit = LOESS of that field + edge trim.
+ *   - ahRate       Δ LOESS(AH) / Δt after trough; edges trimmed again
  *   - vpd          faint = Tetens(RH_raw,T_raw); Fit = Tetens(LOESS(RH),LOESS(T))
- *   - normRate     AH_rate / VPD_fit (VPD from smoothed RH & T)
+ *   - normRate     AH_rate / VPD_fit (inherits NaN edges from both)
  *
  * AH trough marker: detectAhTurnaround() = argmin LOESS(AH) in 0–40 min window.
  *
@@ -895,10 +896,12 @@ export function SensorPlot({
               legendgroup: group,
               showlegend: false,
               x: smoothX,
-              y: smoothY,
+              // LOESS edge blanks are NaN → null so Plotly drops them (no edge spikes).
+              y: smoothY.map((v) => (Number.isFinite(v) ? v : null)),
               yaxis: axisY,
               line: { color, width: showDifference ? 1.2 : 2.4 },
               opacity: showDifference ? 0.35 : 1,
+              connectgaps: false,
               hoverinfo: "skip",
             });
           });
@@ -996,9 +999,10 @@ export function SensorPlot({
             legendgroup: "difference",
             showlegend: false,
             x: smoothX,
-            y: smooth.y,
+            y: smooth.y.map((v) => (Number.isFinite(v) ? v : null)),
             yaxis: axisY,
             line: { color: DIFF_LINE_COLOR, width: 3 },
+            connectgaps: false,
             hoverinfo: "skip",
           });
           meta.push({
