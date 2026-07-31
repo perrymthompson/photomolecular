@@ -18,6 +18,7 @@
  *                          dispatches to derived-metrics for ahRate/vpd/normRate
  *   5. Display Fit       → src/lib/lowess.ts (LOWESS_SPAN) — same smoother as analysis;
  *                          first/last ~3% of each LOESS fit are NaN (edge-bias blank)
+ *   6. Two-trial Diff / Cum Δ → series-diff.ts + diff-stats.ts (overlap grid, t-test)
  *
  * METRICS (computation location):
  *   - absHumidity  humidity.ts via parse-csv (stored). Fit = LOESS(AH) + edge trim.
@@ -58,7 +59,17 @@ import {
   normRateSeries,
   vpdSeries,
 } from "@/lib/derived-metrics";
+import {
+  diffSeriesStats,
+  formatPValue,
+  formatSigned,
+  type DiffSeriesStats,
+} from "@/lib/diff-stats";
 import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
+import {
+  cumulativeSum,
+  differenceOnSharedX,
+} from "@/lib/series-diff";
 import {
   bookmarkPlotX,
   isComputedEndBookmark,
@@ -96,21 +107,34 @@ type Props = {
    * on the currently displayed x-axis (clock time or aligned minutes) and metrics.
    */
   showDifference?: boolean;
+  /**
+   * When true and exactly two trials are plotted, add Cumulative_Delta = cumsum(Δ)
+   * as subplot(s) under the main metric panels.
+   */
+  showCumulativeDifference?: boolean;
   /** Click a point/time → fill bookmark form (does not create a bookmark). */
   onTimePick?: (pick: PlotTimePick) => void;
 };
 
 type CurveMeta = {
   trialId: string;
-  kind: "raw" | "smooth" | "bookmark" | "difference";
+  kind: "raw" | "smooth" | "bookmark" | "difference" | "cumulative";
   color: string;
   metric?: MetricKey;
   bookmarkCount?: number;
 };
 
+type DiffStatRow = {
+  metric: MetricKey;
+  label: string;
+  unit: string;
+  stats: DiffSeriesStats;
+};
+
 const BOOKMARK_SIZE = 13;
 const END_LINE_COLOR = "#8a8a8d";
 const DIFF_LINE_COLOR = "#E8C547";
+const CUM_DIFF_LINE_COLOR = "#6EC6A8";
 const END_LINE_HOVER_STEPS = 28;
 const FULL_RES_GAP_MS = 10_000;
 const METRIC_SHORT: Record<MetricKey, { short: string; unit: string }> = {
@@ -237,63 +261,6 @@ function seriesNumericXY(
     x: order.map((i) => x[i]),
     y: order.map((i) => y[i]),
     label: legendName(s),
-  };
-}
-
-/** Linear interpolation; null if xq outside [xs[0], xs[n-1]]. xs ascending. */
-function interpAt(xs: number[], ys: number[], xq: number): number | null {
-  const n = xs.length;
-  if (n === 0 || xq < xs[0] || xq > xs[n - 1]) return null;
-  if (xq === xs[0]) return ys[0];
-  if (xq === xs[n - 1]) return ys[n - 1];
-  let lo = 0;
-  let hi = n - 1;
-  while (hi - lo > 1) {
-    const mid = (lo + hi) >> 1;
-    if (xs[mid] <= xq) lo = mid;
-    else hi = mid;
-  }
-  const x0 = xs[lo];
-  const x1 = xs[hi];
-  if (x1 === x0) return ys[lo];
-  const t = (xq - x0) / (x1 - x0);
-  return ys[lo] * (1 - t) + ys[hi] * t;
-}
-
-/**
- * Δ(x) = yA(x) − yB(x) on the overlapping x-range of the two displayed curves.
- * Uses the union of sample x in the overlap; linear interp where needed.
- */
-function differenceOnSharedX(
-  a: { x: number[]; y: number[]; label: string },
-  b: { x: number[]; y: number[]; label: string },
-): { x: number[]; y: number[]; name: string } | null {
-  const xMin = Math.max(a.x[0], b.x[0]);
-  const xMax = Math.min(a.x[a.x.length - 1], b.x[b.x.length - 1]);
-  if (!(xMax > xMin)) return null;
-
-  const gridSet = new Set<number>();
-  for (const xv of a.x) {
-    if (xv >= xMin && xv <= xMax) gridSet.add(xv);
-  }
-  for (const xv of b.x) {
-    if (xv >= xMin && xv <= xMax) gridSet.add(xv);
-  }
-  const grid = [...gridSet].sort((u, v) => u - v);
-  const xOut: number[] = [];
-  const yOut: number[] = [];
-  for (const xv of grid) {
-    const ya = interpAt(a.x, a.y, xv);
-    const yb = interpAt(b.x, b.y, xv);
-    if (ya === null || yb === null) continue;
-    xOut.push(xv);
-    yOut.push(ya - yb);
-  }
-  if (xOut.length < 2) return null;
-  return {
-    x: xOut,
-    y: yOut,
-    name: `Δ (${a.label} − ${b.label})`,
   };
 }
 
@@ -622,6 +589,7 @@ export function SensorPlot({
   showBookmarks = true,
   fullResolution = false,
   showDifference = false,
+  showCumulativeDifference = false,
   onTimePick,
 }: Props) {
   // Lazy-load Plotly only when we have data (keeps initial bundle smaller).
@@ -701,8 +669,16 @@ export function SensorPlot({
     const traces: Data[] = [];
     const meta: CurveMeta[] = [];
     const shapes: Partial<Shape>[] = [];
-    const n = metrics.length;
-    const metricValues: number[][] = metrics.map(() => []);
+    const nMetric = metrics.length;
+    const wantCompare = current.length === 2;
+    const wantDiff = showDifference && wantCompare;
+    const wantCum = showCumulativeDifference && wantCompare;
+    const n = nMetric + (wantCum ? nMetric : 0);
+    const metricValues: number[][] = Array.from({ length: n }, () => []);
+    const diffStats: DiffStatRow[] = [];
+
+    const axisId = (panelIndex: number) =>
+      panelIndex === 0 ? ("y" as const) : (`y${panelIndex + 1}` as const);
 
     current.forEach((s) => {
       const color = colors[s.meta.id] ?? "#888";
@@ -936,8 +912,8 @@ export function SensorPlot({
       });
     }
 
-    // Δ = trial A − trial B on the currently displayed x-axis / metrics.
-    if (showDifference && current.length === 2) {
+    // Δ and Cumulative Δ = trial A − trial B on the current x-axis / metrics.
+    if (wantDiff || wantCum) {
       const [sA, sB] = current;
       metrics.forEach((metric, mi) => {
         const a = seriesNumericXY(sA, metric, mode, fullResolution);
@@ -946,87 +922,145 @@ export function SensorPlot({
         const diff = differenceOnSharedX(a, b);
         if (!diff) return;
 
-        for (const v of diff.y) {
-          if (Number.isFinite(v)) metricValues[mi].push(v);
+        const stats = diffSeriesStats(diff.y);
+        if (stats) {
+          diffStats.push({
+            metric,
+            label: METRIC_SHORT[metric].short,
+            unit: METRIC_SHORT[metric].unit,
+            stats,
+          });
         }
 
-        const axisY = mi === 0 ? "y" : (`y${mi + 1}` as const);
         const xPlot =
           mode === "aligned"
             ? diff.x
             : diff.x.map((t) => new Date(t).toISOString());
         const unit = METRIC_SHORT[metric].unit;
-        const text = diff.y.map(
-          (v, i) =>
-            `<span style="color:${DIFF_LINE_COLOR}">●</span> ${diff.name}<br>` +
-            `${METRIC_SHORT[metric].short} Δ ${v.toFixed(4)} ${unit}` +
-            (mode === "aligned"
-              ? `<br>Elapsed ${diff.x[i].toFixed(2)} min`
-              : `<br>${formatClockUtc(new Date(diff.x[i]))}`),
-        );
+        const short = METRIC_SHORT[metric].short;
 
-        traces.push({
-          type: "scatter",
-          mode: "lines",
-          name: diff.name,
-          legendgroup: "difference",
-          showlegend: mi === 0,
-          x: xPlot,
-          y: diff.y,
-          text,
-          yaxis: axisY,
-          line: { color: DIFF_LINE_COLOR, width: 2.6 },
-          connectgaps: false,
-          hovertemplate: "%{text}<extra></extra>",
-        });
-        meta.push({
-          trialId: "",
-          kind: "difference",
-          color: DIFF_LINE_COLOR,
-          metric,
-        });
+        if (wantDiff) {
+          for (const v of diff.y) {
+            if (Number.isFinite(v)) metricValues[mi].push(v);
+          }
 
-        if (showSmooth && diff.x.length >= 3) {
-          const smooth = lowess(diff.x, diff.y, LOWESS_SPAN);
-          const smoothX =
-            mode === "aligned"
-              ? smooth.x
-              : smooth.x.map((t) => new Date(t).toISOString());
+          const text = diff.y.map(
+            (v, i) =>
+              `<span style="color:${DIFF_LINE_COLOR}">●</span> ${diff.name}<br>` +
+              `${short} Δ ${v.toFixed(4)} ${unit}` +
+              (mode === "aligned"
+                ? `<br>Elapsed ${diff.x[i].toFixed(2)} min`
+                : `<br>${formatClockUtc(new Date(diff.x[i]))}`),
+          );
+
           traces.push({
             type: "scatter",
             mode: "lines",
-            name: `${diff.name} (smooth)`,
+            name: diff.name,
             legendgroup: "difference",
-            showlegend: false,
-            x: smoothX,
-            y: smooth.y.map((v) => (Number.isFinite(v) ? v : null)),
-            yaxis: axisY,
-            line: { color: DIFF_LINE_COLOR, width: 3 },
+            showlegend: mi === 0,
+            x: xPlot,
+            y: diff.y,
+            text,
+            yaxis: axisId(mi),
+            line: { color: DIFF_LINE_COLOR, width: 2.6 },
             connectgaps: false,
-            hoverinfo: "skip",
+            hovertemplate: "%{text}<extra></extra>",
           });
           meta.push({
             trialId: "",
-            kind: "smooth",
+            kind: "difference",
             color: DIFF_LINE_COLOR,
+            metric,
+          });
+
+          if (showSmooth && diff.x.length >= 3) {
+            const smooth = lowess(diff.x, diff.y, LOWESS_SPAN);
+            const smoothX =
+              mode === "aligned"
+                ? smooth.x
+                : smooth.x.map((t) => new Date(t).toISOString());
+            traces.push({
+              type: "scatter",
+              mode: "lines",
+              name: `${diff.name} (smooth)`,
+              legendgroup: "difference",
+              showlegend: false,
+              x: smoothX,
+              y: smooth.y.map((v) => (Number.isFinite(v) ? v : null)),
+              yaxis: axisId(mi),
+              line: { color: DIFF_LINE_COLOR, width: 3 },
+              connectgaps: false,
+              hoverinfo: "skip",
+            });
+            meta.push({
+              trialId: "",
+              kind: "smooth",
+              color: DIFF_LINE_COLOR,
+              metric,
+            });
+          }
+        }
+
+        if (wantCum) {
+          const cumY = cumulativeSum(diff.y);
+          const cumPanel = nMetric + mi;
+          for (const v of cumY) {
+            if (Number.isFinite(v)) metricValues[cumPanel].push(v);
+          }
+          const cumName = `Cumulative Δ (${a.label} − ${b.label})`;
+          const cumText = cumY.map((v, i) => {
+            if (!Number.isFinite(v)) return "";
+            return (
+              `<span style="color:${CUM_DIFF_LINE_COLOR}">●</span> ${cumName}<br>` +
+              `Σ ${short} Δ ${v.toFixed(4)} ${unit}` +
+              (mode === "aligned"
+                ? `<br>Elapsed ${diff.x[i].toFixed(2)} min`
+                : `<br>${formatClockUtc(new Date(diff.x[i]))}`)
+            );
+          });
+
+          traces.push({
+            type: "scatter",
+            mode: "lines",
+            name: mi === 0 ? "Cumulative evaporation difference" : cumName,
+            legendgroup: "cumulative",
+            showlegend: mi === 0,
+            x: xPlot,
+            y: cumY.map((v) => (Number.isFinite(v) ? v : null)),
+            text: cumText,
+            yaxis: axisId(cumPanel),
+            line: { color: CUM_DIFF_LINE_COLOR, width: 2.6 },
+            connectgaps: false,
+            hovertemplate: "%{text}<extra></extra>",
+          });
+          meta.push({
+            trialId: "",
+            kind: "cumulative",
+            color: CUM_DIFF_LINE_COLOR,
             metric,
           });
         }
       });
     }
 
-    const domainH = 1 / n;
+    const domainH = 1 / Math.max(n, 1);
     const gap = 0.06;
     const yAxes: Record<string, Partial<LayoutAxis>> = {};
-    metrics.forEach((metric, mi) => {
-      const top = 1 - mi * domainH;
-      const bottom = 1 - (mi + 1) * domainH + gap;
-      const key = mi === 0 ? "yaxis" : `yaxis${mi + 1}`;
+    for (let panel = 0; panel < n; panel++) {
+      const top = 1 - panel * domainH;
+      const bottom = 1 - (panel + 1) * domainH + gap;
+      const key = panel === 0 ? "yaxis" : `yaxis${panel + 1}`;
+      const isCum = panel >= nMetric;
+      const metric = metrics[isCum ? panel - nMetric : panel];
+      const titleText = isCum
+        ? `Cumulative Δ · ${METRIC_SHORT[metric].short}`
+        : wantDiff
+          ? `${METRIC_LABELS[metric]} (Δ)`
+          : METRIC_LABELS[metric];
       yAxes[key] = {
         title: {
-          text: showDifference
-            ? `${METRIC_LABELS[metric]} (Δ)`
-            : METRIC_LABELS[metric],
+          text: titleText,
           font: { size: 11, color: DARK_THEME.text },
         },
         domain: [Math.max(0, bottom), top - 0.02],
@@ -1036,14 +1070,14 @@ export function SensorPlot({
         tickfont: { color: DARK_THEME.subtext, size: 10 },
         automargin: true,
         autorange: false,
-        range: paddedRange(metricValues[mi]),
+        range: paddedRange(metricValues[panel]),
       };
-    });
+    }
 
-    return { traces, meta, shapes, yAxes, n };
+    return { traces, meta, shapes, yAxes, n, diffStats };
     // pointsKey stands in for series samples; colors keyed by trial ids in pointsKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pointsKey, mode, metrics, colors, showSmooth, fullResolution, showDifference]);
+  }, [pointsKey, mode, metrics, colors, showSmooth, fullResolution, showDifference, showCumulativeDifference]);
 
   /** Cheap layer: bookmark markers + guide lines only. */
   const bookmarkLayer = useMemo(() => {
@@ -1347,10 +1381,67 @@ export function SensorPlot({
   }
 
   // Remount only when the set of trials / view mode changes — not on bookmark edits.
-  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}|${showDifference ? "diff" : "nodiff"}`;
+  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}|${showDifference ? "diff" : "nodiff"}|${showCumulativeDifference ? "cum" : "nocum"}`;
+
+  const showStatsBox =
+    (showDifference || showCumulativeDifference) &&
+    series.length === 2 &&
+    base.diffStats.length > 0;
 
   return (
     <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
+      {showStatsBox ? (
+        <div className="space-y-2 border-b border-[#3a3b3f] px-3 py-2.5">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-[#8a8a8d]">
+            Paired difference stats (first − second selected · overlap only)
+          </div>
+          <div className="flex flex-wrap gap-2">
+            {base.diffStats.map((row) => {
+              const { meanDelta, pValue, ci95, n, tStatistic } = row.stats;
+              return (
+                <div
+                  key={row.metric}
+                  className="min-w-[220px] flex-1 rounded border border-[#3a3b3f] bg-[#16171a] px-3 py-2 text-xs text-[#e8e8e8]"
+                >
+                  <div className="mb-1 font-semibold text-[#E8C547]">
+                    {row.label} Δ
+                    <span className="ml-2 font-normal text-[#8a8a8d]">
+                      n={n}
+                    </span>
+                  </div>
+                  <div className="grid gap-0.5 text-[#c8c8cb]">
+                    <div>
+                      Mean Δ{" "}
+                      <span className="text-white">
+                        {formatSigned(meanDelta)} {row.unit}
+                      </span>
+                    </div>
+                    <div>
+                      t=
+                      <span className="text-white">
+                        {formatSigned(tStatistic, 3)}
+                      </span>
+                      {" · p="}
+                      <span className="text-white">{formatPValue(pValue)}</span>
+                    </div>
+                    <div>
+                      95% CI [{" "}
+                      <span className="text-white">
+                        {formatSigned(ci95[0])}
+                      </span>
+                      ,{" "}
+                      <span className="text-white">
+                        {formatSigned(ci95[1])}
+                      </span>{" "}
+                      ]
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      ) : null}
       <PlotComponent
         key={mountKey}
         data={data}

@@ -114,6 +114,8 @@ export function PlotWorkspace() {
   const [fullResolution, setFullResolution] = useState(false);
   const [poolLightDark, setPoolLightDark] = useState(false);
   const [showDifference, setShowDifference] = useState(false);
+  const [showCumulativeDifference, setShowCumulativeDifference] =
+    useState(false);
   const [loading, setLoading] = useState(false);
   const [plotBusy, setPlotBusy] = useState(false);
   const [plotRevision, setPlotRevision] = useState(0);
@@ -423,6 +425,11 @@ export function PlotWorkspace() {
     bumpPlot();
   };
 
+  const setCumulativeDifferenceAndRefresh = (next: boolean) => {
+    setShowCumulativeDifference(next);
+    bumpPlot();
+  };
+
   const canShowDifference =
     !isScatterView && visibleSeries.length === 2;
 
@@ -430,7 +437,10 @@ export function PlotWorkspace() {
     if (!canShowDifference && showDifference) {
       setShowDifference(false);
     }
-  }, [canShowDifference, showDifference]);
+    if (!canShowDifference && showCumulativeDifference) {
+      setShowCumulativeDifference(false);
+    }
+  }, [canShowDifference, showDifference, showCumulativeDifference]);
 
   const handleTrialUpdated = useCallback((updated: TrialMeta) => {
     startTransition(() => {
@@ -443,7 +453,11 @@ export function PlotWorkspace() {
     });
   }, []);
 
-  const plotHeight = view === "combined" ? 1000 : 520;
+  const plotHeight =
+    (view === "combined" ? 1000 : 520) +
+    (showCumulativeDifference && canShowDifference
+      ? metrics.length * 220
+      : 0);
 
   return (
     <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-6 px-4 py-6 lg:flex-row lg:items-start xl:px-6">
@@ -607,6 +621,42 @@ export function PlotWorkspace() {
             </div>
           ) : null}
 
+          {!isScatterView ? (
+            <div
+              className="flex rounded border border-[#3a3b3f] p-0.5"
+              title={
+                canShowDifference
+                  ? "Cumulative evaporation difference: running sum of Δ over the overlapping time range"
+                  : "Select exactly two trials to enable cumulative difference plot"
+              }
+            >
+              <button
+                type="button"
+                disabled={!canShowDifference}
+                onClick={() => setCumulativeDifferenceAndRefresh(true)}
+                className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                  showCumulativeDifference && canShowDifference
+                    ? "bg-[#2a2b2e] text-white"
+                    : "text-[#b5b5b8] hover:text-white"
+                }`}
+              >
+                Cum Δ on
+              </button>
+              <button
+                type="button"
+                disabled={!canShowDifference}
+                onClick={() => setCumulativeDifferenceAndRefresh(false)}
+                className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
+                  !showCumulativeDifference || !canShowDifference
+                    ? "bg-[#2a2b2e] text-white"
+                    : "text-[#b5b5b8] hover:text-white"
+                }`}
+              >
+                Cum Δ off
+              </button>
+            </div>
+          ) : null}
+
           {isScatterView ? (
           <ToggleGroup
             labelOn="Pool Light/Dark"
@@ -673,6 +723,9 @@ export function PlotWorkspace() {
                     showBookmarks={showBookmarks}
                     fullResolution={fullResolution}
                     showDifference={showDifference && canShowDifference}
+                    showCumulativeDifference={
+                      showCumulativeDifference && canShowDifference
+                    }
                     onTimePick={({ trialId, time }) => {
                       setBookmarkPrefill({
                         trialId,
