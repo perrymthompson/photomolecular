@@ -40,9 +40,15 @@ import {
   vpdSeries,
 } from "@/lib/derived-metrics";
 import { PLOT_MAX_POINTS, plotPointIndices } from "@/lib/downsample";
+import {
+  lightConditionFromPlotLabel,
+  type LightCondition,
+} from "@/lib/plot-label";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { uniqueDateLabels } from "@/lib/trial-sort";
 import type { TrialSeries } from "@/types/trial";
+
+export { lightConditionFromPlotLabel } from "@/lib/plot-label";
 
 type Props = {
   series: TrialSeries[];
@@ -55,8 +61,6 @@ type Props = {
    */
   poolLightDark?: boolean;
 };
-
-type LightCondition = "light" | "dark";
 
 type ScatterPoint = {
   vpd: number;
@@ -75,17 +79,6 @@ function legendName(s: TrialSeries): string {
   return plotLabel
     ? `${s.meta.label} · ${short} · ${plotLabel}`
     : `${s.meta.label} · ${short}`;
-}
-
-/** Map plot labels like "Dark" / "Light, 45°" → light | dark. */
-export function lightConditionFromPlotLabel(
-  plotLabel: string | null | undefined,
-): LightCondition | null {
-  const s = (plotLabel ?? "").trim().toLowerCase();
-  if (!s) return null;
-  if (s === "dark" || s.startsWith("dark")) return "dark";
-  if (s.startsWith("light")) return "light";
-  return null;
 }
 
 function formatClockUtc(iso: string): string {

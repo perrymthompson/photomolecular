@@ -14,6 +14,7 @@ import {
   PlotBookmarkAdd,
   type BookmarkPrefill,
 } from "@/components/charts/PlotBookmarkAdd";
+import { NormRateStatsTable } from "@/components/charts/NormRateStatsTable";
 import { PlotTrialNotes } from "@/components/charts/PlotTrialNotes";
 import { TrialSelector } from "@/components/charts/TrialSelector";
 import { selectionSpansMultipleRuns, sortTrials } from "@/lib/trial-sort";
@@ -751,6 +752,8 @@ export function PlotWorkspace() {
                 onSaved={handleTrialUpdated}
               />
             ) : null}
+
+            <NormRateStatsTable />
           </div>
 
           {visibleSeries.length > 0 ? (
