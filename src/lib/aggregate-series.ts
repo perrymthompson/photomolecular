@@ -111,13 +111,43 @@ export function trialNumericXY(
   };
 }
 
-/** Concatenate all finite points from a set of trials, sorted by x. */
+export type OverlapRange = { xMin: number; xMax: number };
+
+/**
+ * Shared x-window where every listed trial has data for this metric/mode.
+ * Returns null if any trial is missing or the ranges do not intersect.
+ */
+export function commonOverlapRange(
+  seriesList: TrialSeries[],
+  metric: MetricKey,
+  mode: PlotMode,
+  fullResolution: boolean,
+): OverlapRange | null {
+  if (seriesList.length === 0) return null;
+  let xMin = -Infinity;
+  let xMax = Infinity;
+  for (const s of seriesList) {
+    const one = trialNumericXY(s, metric, mode, fullResolution);
+    if (!one || one.x.length < 2) return null;
+    xMin = Math.max(xMin, one.x[0]);
+    xMax = Math.min(xMax, one.x[one.x.length - 1]);
+  }
+  if (!(xMax > xMin)) return null;
+  return { xMin, xMax };
+}
+
+/**
+ * Concatenate points from a set of trials, sorted by x.
+ * When `overlap` is set, only points inside that window are kept (so the
+ * aggregate / fit uses the period where all selected trials overlap).
+ */
 export function poolNumericXY(
   seriesList: TrialSeries[],
   metric: MetricKey,
   mode: PlotMode,
   fullResolution: boolean,
   label: string,
+  overlap: OverlapRange | null = null,
 ): NumericSeries | null {
   const x: number[] = [];
   const y: number[] = [];
@@ -125,7 +155,9 @@ export function poolNumericXY(
     const one = trialNumericXY(s, metric, mode, fullResolution);
     if (!one) continue;
     for (let i = 0; i < one.x.length; i++) {
-      x.push(one.x[i]);
+      const xv = one.x[i];
+      if (overlap && (xv < overlap.xMin || xv > overlap.xMax)) continue;
+      x.push(xv);
       y.push(one.y[i]);
     }
   }
@@ -157,14 +189,80 @@ export function scatterSubsample(pooled: NumericSeries): NumericSeries {
 }
 
 /**
- * LOESS best-fit on the pooled cloud (optionally downsampled for speed).
- * Edge trim applied via lowess().
+ * LOESS or exponential fit on the pooled cloud (optionally downsampled).
+ *
+ * Exponential: y = a · e^(b x) via OLS on (x, ln y) for y > 0.
+ * Evaluated on an even grid over the pooled x-span.
  */
-export function fitPooledSeries(pooled: NumericSeries): NumericSeries | null {
+export type AggregateFitKind = "loess" | "exp";
+
+/** OLS: ln(y) = c + b x  ⇒  y = exp(c) · exp(b x). Needs y > 0. */
+function exponentialFitParams(
+  xs: number[],
+  ys: number[],
+): { a: number; b: number; xMin: number; xMax: number } | null {
+  let n = 0;
+  let sumX = 0;
+  let sumL = 0;
+  let sumXX = 0;
+  let sumXL = 0;
+  let xMin = Infinity;
+  let xMax = -Infinity;
+
+  for (let i = 0; i < xs.length; i++) {
+    const x = xs[i];
+    const y = ys[i];
+    if (!Number.isFinite(x) || !Number.isFinite(y) || !(y > 0)) continue;
+    const ly = Math.log(y);
+    if (!Number.isFinite(ly)) continue;
+    n += 1;
+    sumX += x;
+    sumL += ly;
+    sumXX += x * x;
+    sumXL += x * ly;
+    if (x < xMin) xMin = x;
+    if (x > xMax) xMax = x;
+  }
+
+  if (n < 3 || !(xMax > xMin)) return null;
+  const denom = n * sumXX - sumX * sumX;
+  if (Math.abs(denom) < 1e-18) return null;
+  const b = (n * sumXL - sumX * sumL) / denom;
+  const c = (sumL - b * sumX) / n;
+  const a = Math.exp(c);
+  if (!Number.isFinite(a) || !Number.isFinite(b) || !(a > 0)) return null;
+  return { a, b, xMin, xMax };
+}
+
+const EXP_FIT_GRID = 240;
+
+export function fitPooledSeries(
+  pooled: NumericSeries,
+  kind: AggregateFitKind = "loess",
+): NumericSeries | null {
   if (pooled.x.length < 3) return null;
   const idx = subsampleIndices(pooled.x.length, MAX_FIT_POINTS);
   const x = idx.map((i) => pooled.x[i]);
   const y = idx.map((i) => pooled.y[i]);
+
+  if (kind === "exp") {
+    const params = exponentialFitParams(x, y);
+    if (!params) return null;
+    const { a, b, xMin, xMax } = params;
+    const outX: number[] = [];
+    const outY: number[] = [];
+    for (let i = 0; i < EXP_FIT_GRID; i++) {
+      const t = i / (EXP_FIT_GRID - 1);
+      const xv = xMin + t * (xMax - xMin);
+      const yv = a * Math.exp(b * xv);
+      if (!Number.isFinite(yv)) continue;
+      outX.push(xv);
+      outY.push(yv);
+    }
+    if (outX.length < 2) return null;
+    return { x: outX, y: outY, label: pooled.label };
+  }
+
   const fit = lowess(x, y, LOWESS_SPAN);
   const outX: number[] = [];
   const outY: number[] = [];

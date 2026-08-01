@@ -12,6 +12,7 @@ import {
 } from "react";
 import { PlotTrialNotes } from "@/components/charts/PlotTrialNotes";
 import { TrialSelector } from "@/components/charts/TrialSelector";
+import type { AggregateFitKind } from "@/lib/aggregate-series";
 import { detectAhTurnaround } from "@/lib/derived-metrics";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { sortTrials } from "@/lib/trial-sort";
@@ -41,6 +42,7 @@ type PersistedState = {
   mode?: PlotMode;
   view?: PlotView;
   showSmooth?: boolean;
+  fitKind?: AggregateFitKind;
   fullResolution?: boolean;
   modeTouched?: boolean;
   labelA?: string;
@@ -126,6 +128,7 @@ export function AggregatePlotWorkspace() {
   const [mode, setMode] = useState<PlotMode>("aligned");
   const [view, setView] = useState<PlotView>("ah");
   const [showSmooth, setShowSmooth] = useState(true);
+  const [fitKind, setFitKind] = useState<AggregateFitKind>("exp");
   const [fullResolution, setFullResolution] = useState(true);
   const [showDifference, setShowDifference] = useState(false);
   const [showCumulativeDifference, setShowCumulativeDifference] =
@@ -204,6 +207,9 @@ export function AggregatePlotWorkspace() {
         setView(parsed.view);
       }
       if (typeof parsed.showSmooth === "boolean") setShowSmooth(parsed.showSmooth);
+      if (parsed.fitKind === "loess" || parsed.fitKind === "exp") {
+        setFitKind(parsed.fitKind);
+      }
       if (typeof parsed.fullResolution === "boolean") {
         setFullResolution(parsed.fullResolution);
       }
@@ -243,6 +249,7 @@ export function AggregatePlotWorkspace() {
       mode,
       view,
       showSmooth,
+      fitKind,
       fullResolution,
       modeTouched,
       labelA,
@@ -255,6 +262,7 @@ export function AggregatePlotWorkspace() {
     mode,
     view,
     showSmooth,
+    fitKind,
     fullResolution,
     modeTouched,
     labelA,
@@ -459,6 +467,10 @@ export function AggregatePlotWorkspace() {
   };
   const setSmoothAndRefresh = (next: boolean) => {
     setShowSmooth(next);
+    bumpPlot();
+  };
+  const setFitKindAndRefresh = (next: AggregateFitKind) => {
+    setFitKind(next);
     bumpPlot();
   };
   const setFullResolutionAndRefresh = (next: boolean) => {
@@ -721,8 +733,40 @@ export function AggregatePlotWorkspace() {
             labelOff="Fit off"
             on={showSmooth}
             onChange={setSmoothAndRefresh}
-            title="Fit off = pooled scatter; Fit on = LOESS best-fit on each set"
+            title="Fit off = pooled scatter; Fit on = best-fit curve on each set"
           />
+
+          <div
+            className="flex rounded border border-[#3a3b3f] p-0.5"
+            title={
+              fitKind === "exp"
+                ? "Exponential fit: y = a·e^(b·x) via log-linear OLS (y > 0 only)"
+                : "LOESS locally weighted smooth fit"
+            }
+          >
+            <button
+              type="button"
+              onClick={() => setFitKindAndRefresh("exp")}
+              className={`rounded px-3 py-1.5 text-xs ${
+                fitKind === "exp"
+                  ? "bg-[#2a2b2e] text-white"
+                  : "text-[#b5b5b8] hover:text-white"
+              }`}
+            >
+              Exp
+            </button>
+            <button
+              type="button"
+              onClick={() => setFitKindAndRefresh("loess")}
+              className={`rounded px-3 py-1.5 text-xs ${
+                fitKind === "loess"
+                  ? "bg-[#2a2b2e] text-white"
+                  : "text-[#b5b5b8] hover:text-white"
+              }`}
+            >
+              LOESS
+            </button>
+          </div>
 
           <div
             className="flex rounded border border-[#3a3b3f] p-0.5"
@@ -839,6 +883,7 @@ export function AggregatePlotWorkspace() {
                   height={plotHeight}
                   plotRevision={plotRevision}
                   showSmooth={showSmooth}
+                  fitKind={fitKind}
                   fullResolution={fullResolution}
                   showDifference={showDifference && canShowDifference}
                   showCumulativeDifference={

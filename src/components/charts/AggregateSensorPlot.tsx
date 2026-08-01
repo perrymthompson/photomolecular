@@ -12,9 +12,11 @@ import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis } from "plotly.js";
 import { DARK_THEME } from "@/lib/colors";
 import {
+  commonOverlapRange,
   fitPooledSeries,
   poolNumericXY,
   scatterSubsample,
+  type AggregateFitKind,
 } from "@/lib/aggregate-series";
 import {
   diffSeriesStats,
@@ -40,8 +42,10 @@ type Props = {
   metrics?: MetricKey[];
   height?: number;
   plotRevision?: number;
-  /** Fit on = LOESS curves; Fit off = scatter only. */
+  /** Fit on = draw fit curves; Fit off = scatter only. */
   showSmooth?: boolean;
+  /** LOESS or exponential (y = a e^(bx)). */
+  fitKind?: AggregateFitKind;
   fullResolution?: boolean;
   showDifference?: boolean;
   showCumulativeDifference?: boolean;
@@ -127,6 +131,7 @@ export function AggregateSensorPlot({
   height = 520,
   plotRevision = 0,
   showSmooth = true,
+  fitKind = "loess",
   fullResolution = true,
   showDifference = false,
   showCumulativeDifference = false,
@@ -167,12 +172,23 @@ export function AggregateSensorPlot({
     const diffStats: DiffStatRow[] = [];
 
     metrics.forEach((metric, mi) => {
+      // Restrict pooling / fit to x where every selected trial (A ∪ B) has data.
+      const overlapTrials = [...seriesA, ...seriesB];
+      const overlap = commonOverlapRange(
+        overlapTrials,
+        metric,
+        mode,
+        fullResolution,
+      );
+      if (!overlap) return;
+
       const pooledA = poolNumericXY(
         seriesA,
         metric,
         mode,
         fullResolution,
         labelA,
+        overlap,
       );
       const pooledB = poolNumericXY(
         seriesB,
@@ -180,7 +196,10 @@ export function AggregateSensorPlot({
         mode,
         fullResolution,
         labelB,
+        overlap,
       );
+
+      const fitSuffix = fitKind === "exp" ? "exp" : "LOESS";
 
       const addScatter = (pooled: NumericSeries, color: string, name: string) => {
         const sc = scatterSubsample(pooled);
@@ -229,7 +248,7 @@ export function AggregateSensorPlot({
         const text = fit.y.map((v, i) => {
           const xv = fit.x[i];
           return (
-            `<span style="color:${color}">●</span> ${name} · fit<br>` +
+            `<span style="color:${color}">●</span> ${name} · ${fitSuffix}<br>` +
             `${short} ${v.toFixed(4)} ${unit}` +
             (isElapsedPlotMode(mode)
               ? `<br>Elapsed ${xv.toFixed(2)} min`
@@ -239,7 +258,7 @@ export function AggregateSensorPlot({
         traces.push({
           type: "scatter",
           mode: "lines",
-          name: `${name} · fit`,
+          name: `${name} · ${fitSuffix}`,
           legendgroup: name,
           showlegend: true,
           x: xPlot,
@@ -257,12 +276,12 @@ export function AggregateSensorPlot({
 
       if (pooledA) {
         addScatter(pooledA, SET_A_COLOR, labelA);
-        fitA = fitPooledSeries(pooledA);
+        fitA = fitPooledSeries(pooledA, fitKind);
         if (showSmooth && fitA) addFit(fitA, SET_A_COLOR, labelA);
       }
       if (pooledB) {
         addScatter(pooledB, SET_B_COLOR, labelB);
-        fitB = fitPooledSeries(pooledB);
+        fitB = fitPooledSeries(pooledB, fitKind);
         if (showSmooth && fitB) addFit(fitB, SET_B_COLOR, labelB);
       }
 
@@ -413,6 +432,7 @@ export function AggregateSensorPlot({
     mode,
     metrics,
     showSmooth,
+    fitKind,
     fullResolution,
     showDifference,
     showCumulativeDifference,
@@ -467,7 +487,7 @@ export function AggregateSensorPlot({
     };
   }, [base.shapes, base.yAxes, height, labelA, labelB, metrics, mode]);
 
-  const mountKey = `${pointsKey}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}|${showDifference}|${showCumulativeDifference}|${labelA}|${labelB}`;
+  const mountKey = `${pointsKey}|${mode}|${metrics.join("-")}|${showSmooth}|${fitKind}|${fullResolution}|${showDifference}|${showCumulativeDifference}|${labelA}|${labelB}`;
 
   const showStatsBox =
     (showDifference || showCumulativeDifference) && base.diffStats.length > 0;
@@ -488,8 +508,8 @@ export function AggregateSensorPlot({
       {showStatsBox ? (
         <div className="space-y-2 border-b border-[#3a3b3f] px-3 py-2.5">
           <div className="text-[11px] font-medium uppercase tracking-wide text-[#8a8a8d]">
-            Aggregated difference stats ({labelA} − {labelB} · fit curves ·
-            overlap only)
+            Aggregated difference stats ({labelA} − {labelB} ·{" "}
+            {fitKind === "exp" ? "exp" : "LOESS"} fits · overlap only)
           </div>
           <div className="flex flex-wrap gap-2">
             {base.diffStats.map((row) => {
