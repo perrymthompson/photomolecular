@@ -440,42 +440,48 @@ export function AggregateSensorPlot({
     labelB,
   ]);
 
-  const layout = useMemo((): Partial<Layout> => {
-    const title =
-      mode === "aligned"
-        ? `Aggregated · ${labelA} vs ${labelB} (session start)`
-        : mode === "trough"
-          ? `Aggregated · ${labelA} vs ${labelB} (AH trough)`
-          : `Aggregated · ${labelA} vs ${labelB} (clock time)`;
+  // Match portal body font for on-screen + PNG export (CSS vars like
+  // var(--font-sans) do not resolve in Plotly's static image export).
+  const [plotFontFamily, setPlotFontFamily] = useState(
+    "Source Sans 3, sans-serif",
+  );
+  useEffect(() => {
+    const family = getComputedStyle(document.body).fontFamily;
+    if (family) setPlotFontFamily(family);
+  }, []);
 
+  const layout = useMemo((): Partial<Layout> => {
     return {
-      title: {
-        text: title,
-        font: { size: 14, color: DARK_THEME.text },
-        x: 0.01,
-        xanchor: "left",
-      },
+      title: undefined,
       paper_bgcolor: DARK_THEME.paper,
       plot_bgcolor: DARK_THEME.bg,
-      font: { color: DARK_THEME.text, family: "var(--font-sans)" },
-      margin: { l: 64, r: 24, t: 48, b: 48 },
+      font: { color: DARK_THEME.text, family: plotFontFamily, size: 12 },
+      margin: { l: 64, r: 24, t: 40, b: 48 },
       height,
       showlegend: true,
       legend: {
         orientation: "h",
         y: 1.08,
-        font: { size: 11, color: DARK_THEME.subtext },
+        font: { size: 11, color: DARK_THEME.subtext, family: plotFontFamily },
       },
       xaxis: {
         title: {
           text: isElapsedPlotMode(mode)
             ? "Elapsed time (min)"
             : "Time (UTC)",
-          font: { size: 11, color: DARK_THEME.subtext },
+          font: {
+            size: 11,
+            color: DARK_THEME.subtext,
+            family: plotFontFamily,
+          },
         },
         type: isElapsedPlotMode(mode) ? "linear" : "date",
         gridcolor: DARK_THEME.gridMajor,
-        tickfont: { color: DARK_THEME.subtext, size: 10 },
+        tickfont: {
+          color: DARK_THEME.subtext,
+          size: 10,
+          family: plotFontFamily,
+        },
         ...(isElapsedPlotMode(mode)
           ? {}
           : { tickformat: "%H:%M" }),
@@ -485,7 +491,7 @@ export function AggregateSensorPlot({
       hovermode: "closest",
       uirevision: `agg-${mode}-${metrics.join("-")}`,
     };
-  }, [base.shapes, base.yAxes, height, labelA, labelB, metrics, mode]);
+  }, [base.shapes, base.yAxes, height, metrics, mode, plotFontFamily]);
 
   const mountKey = `${pointsKey}|${mode}|${metrics.join("-")}|${showSmooth}|${fitKind}|${fullResolution}|${showDifference}|${showCumulativeDifference}|${labelA}|${labelB}`;
 

@@ -406,6 +406,70 @@ export function AggregatePlotWorkspace() {
     [seriesA, seriesB],
   );
 
+  /** Selected but not used in the current plot (display-only; no math impact). */
+  const droppedSeriesNotes = useMemo(() => {
+    const visibleIds = new Set(
+      [...visibleA, ...visibleB].map((s) => s.meta.id),
+    );
+    const metaById = new Map(trials.map((t) => [t.id, t]));
+    const notes: {
+      id: string;
+      label: string;
+      sets: string;
+      reason: string;
+    }[] = [];
+
+    for (const id of allSelectedIds) {
+      if (visibleIds.has(id)) continue;
+      const meta = metaById.get(id) ?? seriesById[id]?.meta;
+      const short = meta?.filename?.replace(/\.csv$/i, "") ?? id;
+      const chamber = meta?.label?.trim() || "?";
+      const plotLabel = meta?.plotLabel?.trim();
+      const label = plotLabel
+        ? `${chamber} · ${plotLabel} · ${short}`
+        : `${chamber} · ${short}`;
+      const inA = idsA.includes(id);
+      const inB = idsB.includes(id);
+      const sets =
+        inA && inB
+          ? `${labelA} & ${labelB}`
+          : inA
+            ? labelA
+            : labelB;
+      let reason: string;
+      if (!seriesById[id]) {
+        reason = "Series not loaded (or still loading)";
+      } else if (mode === "aligned") {
+        reason = "Missing session start time (required for Session start mode)";
+      } else if (mode === "trough") {
+        reason = "AH trough not detected (required for AH trough mode)";
+      } else {
+        reason = "Filtered out for the current plot mode";
+      }
+      notes.push({ id, label, sets, reason });
+    }
+    return notes;
+  }, [
+    allSelectedIds,
+    visibleA,
+    visibleB,
+    trials,
+    seriesById,
+    idsA,
+    idsB,
+    labelA,
+    labelB,
+    mode,
+  ]);
+
+  useEffect(() => {
+    if (droppedSeriesNotes.length === 0) return;
+    console.info(
+      "[aggregate] Dropped series:",
+      droppedSeriesNotes.map((d) => `${d.label} [${d.sets}]: ${d.reason}`),
+    );
+  }, [droppedSeriesNotes]);
+
   const alignedReady =
     loadedSeries.length > 0 &&
     loadedSeries.every((s) => s.meta.sessionStartTime);
@@ -911,6 +975,24 @@ export function AggregatePlotWorkspace() {
             </div>
           ) : null}
         </div>
+
+        {droppedSeriesNotes.length > 0 ? (
+          <div className="rounded border border-[#F0AD4E]/35 bg-[#F0AD4E]/10 px-3 py-2.5 text-xs text-[#e8e8e8]">
+            <div className="mb-1.5 font-medium text-[#F0AD4E]">
+              Dropped series ({droppedSeriesNotes.length}) — selected but not
+              used in the current plot
+            </div>
+            <ul className="list-inside list-disc space-y-1 text-[#c8c8cb]">
+              {droppedSeriesNotes.map((d) => (
+                <li key={d.id}>
+                  <span className="text-white">{d.label}</span>
+                  <span className="text-[#8a8a8d]"> · {d.sets}</span>
+                  <span className="text-[#b5b5b8]"> — {d.reason}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
       </section>
     </div>
   );
