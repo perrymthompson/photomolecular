@@ -1,13 +1,40 @@
 /**
- * Cross-run Norm Rate comparisons (all days, excluding Run X).
+ * =============================================================================
+ * COMPUTATION MODULE: norm-rate-run-stats.ts
+ * Cross-run Norm Rate pair comparisons (exclude Run X)
+ * =============================================================================
  *
- * Alignment (`NormRateAlignMode`) changes the *pairing x-axis only*:
- *   session — minutes since sessionStartTime
- *   trough  — minutes since AH trough (t_start)
- *   clock   — absolute epoch ms (wall clock)
+ * PER-TRIAL SERIES (alignedNormRateSeries)
+ * ----------------------------------------
+ *   y_i = Norm_Rate_i = AH_rate_i / VPD_fit_i     // derived-metrics.ts
+ *         (always post-trough; session floor for trough detection)
+ *   x_i | session → (t − sessionStart) / 60000
+ *       | trough  → (t − ahTrough) / 60000
+ *       | clock   → t  [epoch ms]
  *
- * Norm Rate y-values always use: session floor → detect trough → rates after
- * trough / VPD_fit (same as the plot Norm Rate metric).
+ * PER-RUN PAIR
+ * ------------
+ * For each day+run letter (A/B/C…, not X), pick a comparison pair
+ * (Light−Dark, ch1−ch2 matched, 45°−90°, …) then:
+ *   Δ(x) = differenceOnSharedX(A, B)     // overlap + linear interp
+ *   stats = diffSeriesStats(Δ)           // mean, t, CI
+ *   ∫Δ, AvgΔ = integralDifferenceOnSharedX
+ *
+ * ACROSS RUNS
+ * -----------
+ * Collect each run’s mean Δ, then diffSeriesStats(those means) → “across
+ * runs” one-sample test of whether average run-level Δ is zero.
+ *
+ * ANGLE EFFECT
+ * ------------
+ * Welch t-test of {mean Δ Light−Dark @ 45°} vs {mean Δ @ 90°} across runs.
+ *
+ * RATIONALE
+ * ---------
+ * Separates confounders: Light−Dark confounds chamber; hardware-matched
+ * holds condition fixed; angle blocks isolate illumination geometry.
+ * Align mode only remaps x for pairing — y definition never changes.
+ * =============================================================================
  */
 
 import {

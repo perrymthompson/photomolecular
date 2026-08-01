@@ -1,4 +1,13 @@
-/** Plot-label helpers for Light / Dark condition and beam angle. */
+/**
+ * =============================================================================
+ * HELPERS: plot-label.ts (parsing, not sensor math)
+ * =============================================================================
+ * Maps free-text `plotLabel` / chamber id into analysis categories used by
+ * norm-rate-run-stats.ts:
+ *   Light / Dark condition, beam angle (45 / 90), hardware New/Old (ch1/ch2).
+ * No floating-point sensor formulas here — classification only.
+ * =============================================================================
+ */
 
 export type LightCondition = "light" | "dark";
 

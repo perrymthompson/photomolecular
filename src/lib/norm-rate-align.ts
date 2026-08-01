@@ -1,4 +1,17 @@
-/** Align-mode enums/labels for Norm Rate stats (safe for Client Components). */
+/**
+ * =============================================================================
+ * COMPUTATION MODULE: norm-rate-align.ts
+ * Align-mode enums / labels (client-safe; no fs / Node APIs)
+ * =============================================================================
+ *
+ * session — pair on minutes since sessionStartTime
+ * trough  — pair on minutes since AH trough (t_start)
+ * clock   — pair on absolute wall-clock (epoch ms)
+ *
+ * Kept separate from trial-time-origins.ts so Client Components can import
+ * labels without pulling server-only persistence.
+ * =============================================================================
+ */
 
 export type NormRateAlignMode = "session" | "trough" | "clock";
 

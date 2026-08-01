@@ -1,9 +1,31 @@
 /**
- * Analysis time origins per trial — session start, AH trough, recording start.
+ * =============================================================================
+ * COMPUTATION MODULE: trial-time-origins.ts
+ * Per-trial analysis clocks (session / AH trough / recording start)
+ * =============================================================================
  *
- * ALIGNMENT MODES — see norm-rate-align.ts
+ * WHY
+ * ---
+ * Cross-run Norm Rate stats and plot alignment need a comparable x-origin
+ * per trial. This module *computes* those origins from loaded series;
+ * persistence (JSON /tmp on Vercel) is in trial-time-origins-store.ts.
  *
- * Persistence (fs) lives in trial-time-origins-store.ts — server-only.
+ * ORIGINS
+ * -------
+ * recordingStart — first SensorPoint timestamp (CSV begin)
+ * sessionStart   — sessionStartIso(firstSampleDate, meta.sessionStartTime)
+ *                  = calendar date of data + user HH:MM[:SS] (UTC)
+ * ahTrough       — detectAhTurnaround(points, sessionStartMs) → t_start
+ *
+ * ALIGN MODE → x (see also norm-rate-align.ts)
+ * --------------------------------------------
+ *   session → x = (t − sessionStart) / 60000   [min]
+ *   trough  → x = (t − ahTrough) / 60000       [min]
+ *   clock   → x = t                            [epoch ms]
+ *
+ * Note: Norm Rate *y* always uses post-trough AH_rate / VPD_fit regardless
+ * of align mode; align mode only changes the pairing x-axis.
+ * =============================================================================
  */
 
 import { detectAhTurnaround } from "@/lib/derived-metrics";
@@ -89,6 +111,7 @@ export function computeTrialTimeOrigins(s: TrialSeries): TrialTimeOrigins {
   };
 }
 
+/** Epoch ms origin for session/trough align; null for clock (use absolute t). */
 export function originMsForAlignMode(
   origins: TrialTimeOrigins,
   mode: NormRateAlignMode,

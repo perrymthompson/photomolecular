@@ -1,6 +1,49 @@
 /**
- * Pool multiple trials into one (x, y) cloud for aggregate plotting.
- * X-axis follows PlotMode (clock ms, session minutes, or AH-trough minutes).
+ * =============================================================================
+ * COMPUTATION MODULE: aggregate-series.ts
+ * Multi-trial pooling, shared overlap, LOESS / exponential aggregate fits
+ * =============================================================================
+ *
+ * PURPOSE
+ * -------
+ * Aggregate Plots page: combine many trials into Set A and Set B clouds,
+ * then fit one curve per set and optionally Diff = fitA − fitB.
+ *
+ * PIPELINE (per metric)
+ * ---------------------
+ * 1. For each selected trial, build (x, y) via trialNumericXY()
+ *      x | calendar → epoch ms (wall clock)
+ *        | aligned  → minutes since sessionStartTime
+ *        | trough   → minutes since AH trough (t_start)
+ *      y | stored AH/RH/Temp, or derived ahRate / vpd / normRate
+ *        (same derived-metrics.ts formulas as individual SensorPlot)
+ *
+ * 2. fromStartOnly (always on for aggregate):
+ *      aligned / trough → drop x < 0
+ *      calendar         → drop t < sessionStartMs when session start is set
+ *    Rationale: lid / exposure “start” is the scientifically relevant origin;
+ *    pre-start samples would bias the aggregate fit.
+ *
+ * 3. commonOverlapRange(all trials in A ∪ B):
+ *      xMin = max_i (first x_i),  xMax = min_i (last x_i)
+ *      then for elapsed modes: xMin = max(xMin, 0)
+ *    Rationale: the average / fit should only use times where EVERY selected
+ *    trial contributes data, so no set is dominated by a longer run’s tail.
+ *
+ * 4. poolNumericXY(set, overlap) → concatenate points inside [xMin, xMax]
+ *
+ * 5. fitPooledSeries(cloud, kind):
+ *      loess → Cleveland LOESS (lowess.ts), span = LOWESS_SPAN
+ *      exp   → y = a·e^(b·x) via OLS on (x, ln y) for y > 0
+ *
+ * Diff / Cum Δ / stats reuse series-diff.ts + diff-stats.ts on the two fits.
+ *
+ * VERIFY
+ * ------
+ * - With Fit on + Exp: curve should start at x≈0 (session/trough) and cover
+ *   only the shared overlap (not the longest trial’s full length).
+ * - AH trough / session modes: no fit points with x < 0.
+ * =============================================================================
  */
 
 import {
@@ -17,7 +60,7 @@ import type { NumericSeries } from "@/lib/series-diff";
 import type { MetricKey, PlotMode, TrialSeries } from "@/types/trial";
 
 const FULL_RES_GAP_MS = 10_000;
-/** Cap LOESS input size so pooled full-res clouds stay interactive. */
+/** Cap LOESS / exp input size so pooled full-res clouds stay interactive. */
 const MAX_FIT_POINTS = 3000;
 /** Cap scatter markers drawn on the plot. */
 const MAX_SCATTER_POINTS = 8000;
@@ -53,9 +96,17 @@ function sessionStartMsForSeries(s: TrialSeries): number | null {
 
 /**
  * Numeric (x, y) for one trial in the current plot mode.
- * When `fromStartOnly` is true (aggregate default):
- *   - session / AH trough: keep x ≥ 0 (at or after the alignment origin)
- *   - clock time: keep wall time ≥ session start when that time is set
+ *
+ * X DEFINITIONS
+ * -------------
+ *   calendar: x = t_ms                          [epoch ms]
+ *   aligned:  x = (t_ms − sessionStart_ms) / 6e4 [min]
+ *   trough:   x = (t_ms − trough_ms) / 6e4       [min]
+ *
+ * fromStartOnly (aggregate default = true)
+ * -----------------------------------------
+ *   aligned / trough: keep only x ≥ 0
+ *   calendar:         keep only t_ms ≥ sessionStart_ms (if known)
  */
 export function trialNumericXY(
   s: TrialSeries,
@@ -109,7 +160,6 @@ export function trialNumericXY(
       if (mode === "aligned" || mode === "trough") {
         if (xv < 0) continue;
       } else if (sessionStartMs != null && Number.isFinite(sessionStartMs)) {
-        // Clock mode: only at/after this trial's session start.
         if (tMs < sessionStartMs) continue;
       }
     }
@@ -130,9 +180,12 @@ export function trialNumericXY(
 export type OverlapRange = { xMin: number; xMax: number };
 
 /**
- * Shared x-window where every listed trial has post-start data for this
- * metric/mode. Overlap is computed after the from-start filter so the fit
- * never uses pre-start samples or non-overlapping tails.
+ * Shared post-start x-window across every listed trial.
+ *
+ *   xMin = max_i x_i[0],   xMax = min_i x_i[n_i−1]
+ *   if mode ∈ {aligned, trough}: xMin ← max(xMin, 0)
+ *
+ * Returns null if any trial lacks usable post-start data or ranges miss.
  */
 export function commonOverlapRange(
   seriesList: TrialSeries[],
@@ -150,7 +203,6 @@ export function commonOverlapRange(
     xMax = Math.min(xMax, one.x[one.x.length - 1]);
   }
   if (!(xMax > xMin)) return null;
-  // Elapsed modes: never start the shared window before the origin.
   if (mode === "aligned" || mode === "trough") {
     xMin = Math.max(xMin, 0);
   }
@@ -159,9 +211,8 @@ export function commonOverlapRange(
 }
 
 /**
- * Concatenate points from a set of trials, sorted by x.
- * Uses post-start samples only; when `overlap` is set, further restricts to
- * the shared window where all selected trials have data.
+ * Pool points from one set, optionally clipped to a shared overlap window.
+ * Output is sorted by x (required by LOESS / Diff).
  */
 export function poolNumericXY(
   seriesList: TrialSeries[],
@@ -192,7 +243,7 @@ export function poolNumericXY(
   };
 }
 
-/** Evenly spaced subsample for display / LOESS (preserves order). */
+/** Evenly spaced subsample for display / fit (preserves order). */
 function subsampleIndices(n: number, maxPoints: number): number[] {
   if (n <= maxPoints) {
     return Array.from({ length: n }, (_, i) => i);
@@ -200,7 +251,7 @@ function subsampleIndices(n: number, maxPoints: number): number[] {
   return plotPointIndices(n, false, maxPoints);
 }
 
-/** Scatter-ready subsample of a pooled cloud. */
+/** Scatter-ready subsample of a pooled cloud (display only; fit uses its own cap). */
 export function scatterSubsample(pooled: NumericSeries): NumericSeries {
   const idx = subsampleIndices(pooled.x.length, MAX_SCATTER_POINTS);
   return {
@@ -210,15 +261,26 @@ export function scatterSubsample(pooled: NumericSeries): NumericSeries {
   };
 }
 
-/**
- * LOESS or exponential fit on the pooled cloud (optionally downsampled).
- *
- * Exponential: y = a · e^(b x) via OLS on (x, ln y) for y > 0.
- * Evaluated on an even grid over the pooled x-span.
- */
 export type AggregateFitKind = "loess" | "exp";
 
-/** OLS: ln(y) = c + b x  ⇒  y = exp(c) · exp(b x). Needs y > 0. */
+/**
+ * Exponential fit via log-linear OLS.
+ *
+ * MODEL
+ * -----
+ *   y = a · e^(b · x)     (a > 0)
+ *
+ * LINEARIZATION (only samples with y > 0)
+ * ----------------------------------------
+ *   ln(y) = c + b·x,   a = e^c
+ *
+ *   b = (n Σ x ln y − Σx Σ ln y) / (n Σ x² − (Σx)²)
+ *   c = (Σ ln y − b Σx) / n
+ *
+ * Rationale: chamber AH often decays roughly exponentially after the trough;
+ * log-linear OLS is closed-form and stable. Negative y (e.g. some rates) are
+ * excluded — if fewer than 3 positive points remain, fit fails (null).
+ */
 function exponentialFitParams(
   xs: number[],
   ys: number[],
@@ -258,6 +320,15 @@ function exponentialFitParams(
 
 const EXP_FIT_GRID = 240;
 
+/**
+ * Fit the pooled (already overlap- and post-start-filtered) cloud.
+ *
+ * loess — Cleveland LOESS + edge trim (same as individual Fit on).
+ * exp   — evaluate a·e^(bx) on an even grid over [xMin, xMax] of fit points.
+ *
+ * Large clouds are evenly subsampled to MAX_FIT_POINTS before fitting
+ * (performance only; does not change the overlap / start filters).
+ */
 export function fitPooledSeries(
   pooled: NumericSeries,
   kind: AggregateFitKind = "loess",

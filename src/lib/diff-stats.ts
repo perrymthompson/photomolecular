@@ -1,8 +1,44 @@
 /**
- * One-sample / paired difference statistics for trial Δ series.
+ * =============================================================================
+ * COMPUTATION MODULE: diff-stats.ts
+ * Paired / one-sample and Welch two-sample t-tests on Δ series
+ * =============================================================================
  *
- * Treats finite delta[i] as paired differences and tests H0: mean(delta) = 0
- * (equivalent to a paired t-test of A vs B on the aligned grid).
+ * PAIRED DIFF STATS (diffSeriesStats) — SensorPlot / Aggregate Diff box
+ * ---------------------------------------------------------------------
+ * Input: Δ_i = yA(x_i) − yB(x_i) on the shared-x grid (series-diff.ts).
+ * Treat finite Δ_i as i.i.d. paired differences (approximation: ignores
+ * autocorrelation along the time series — standard for exploratory UI stats).
+ *
+ *   n     = #{finite Δ}
+ *   μ̂    = (1/n) Σ Δ_i
+ *   s²    = (1/(n−1)) Σ (Δ_i − μ̂)²     (sample variance)
+ *   SE    = s / √n
+ *   t     = μ̂ / SE                     (H0: E[Δ] = 0)
+ *   df    = n − 1
+ *   p     = 2 · (1 − F_{t,df}(|t|))     (two-sided)
+ *   CI95  = μ̂ ± t_{1−α/2, df} · SE     (α = 0.05)
+ *
+ * Equivalent to a paired t-test of A vs B on the aligned grid.
+ *
+ * WELCH TWO-SAMPLE (welchTwoSampleTTest) — Norm Rate angle effect
+ * ----------------------------------------------------------------
+ * Compares two independent groups of per-run mean-Δ values
+ * (e.g. Light−Dark@45° vs Light−Dark@90°):
+ *
+ *   t = (μ̂_A − μ̂_B) / √(s²_A/n_A + s²_B/n_B)
+ *   df ≈ Welch–Satterthwaite:
+ *       (s²_A/n_A + s²_B/n_B)²
+ *       / [ (s²_A/n_A)²/(n_A−1) + (s²_B/n_B)²/(n_B−1) ]
+ *
+ * Student-t CDF uses the regularized incomplete beta (Lentz CF) + Lanczos ln Γ.
+ *
+ * RATIONALE
+ * ---------
+ * Plot UI needs an immediate “is mean Δ near zero?” check without shipping a
+ * stats library. Autocorrelation means p-values are optimistic — treat them
+ * as descriptive, not confirmatory.
+ * =============================================================================
  */
 
 export type DiffSeriesStats = {
@@ -18,7 +54,8 @@ export type DiffSeriesStats = {
 
 /**
  * Regularized incomplete beta I_x(a,b) via Lentz continued fraction.
- * Used for the Student-t CDF.
+ * Used for the Student-t CDF identity:
+ *   P(|T| > |t|) related to I_{df/(df+t²)}(df/2, 1/2).
  */
 function regularizedIncompleteBeta(x: number, a: number, b: number): number {
   if (x <= 0) return 0;
@@ -86,7 +123,13 @@ function lgamma(z: number): number {
   return 0.5 * Math.log(2 * Math.PI) + (z + 0.5) * Math.log(t) - t + Math.log(x);
 }
 
-/** P(T ≤ t) for Student-t with `df` degrees of freedom. */
+/**
+ * Student-t CDF F(t; df) = P(T ≤ t).
+ *
+ *   Let x = df / (df + t²). Then
+ *   P(|T| > |t|) = I_x(df/2, 1/2),
+ *   and F uses the usual sign split around 0.5.
+ */
 export function studentTCdf(t: number, df: number): number {
   if (!Number.isFinite(t) || !(df > 0)) return Number.NaN;
   if (t === 0) return 0.5;
@@ -95,7 +138,7 @@ export function studentTCdf(t: number, df: number): number {
   return t > 0 ? 1 - ib : ib;
 }
 
-/** Two-sided critical value t_{1-α/2, df} via bisection. */
+/** Two-sided critical value t_{1−α/2, df} via bisection on the CDF. */
 export function studentTCritical(df: number, alpha = 0.05): number {
   if (!(df > 0)) return Number.NaN;
   const target = 1 - alpha / 2;
@@ -114,8 +157,8 @@ export function studentTCritical(df: number, alpha = 0.05): number {
 }
 
 /**
- * Mean(delta), one-sample t vs 0, and 95% CI for the mean.
- * Non-finite values are dropped.
+ * One-sample / paired t-test of mean(Δ) vs 0 (see module header).
+ * Non-finite values are dropped before n, μ̂, s are computed.
  */
 export function diffSeriesStats(delta: number[]): DiffSeriesStats | null {
   const vals: number[] = [];
@@ -192,6 +235,7 @@ export type TwoSampleTTest = {
 /**
  * Welch two-sample t-test: H0 mean(a) = mean(b).
  * Used to compare per-run mean Δ between two groups (e.g. 45° vs 90°).
+ * See module header for formulas.
  */
 export function welchTwoSampleTTest(
   a: number[],

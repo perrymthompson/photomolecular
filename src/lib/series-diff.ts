@@ -1,18 +1,38 @@
 /**
- * Shared-x difference and cumulative difference for two trial curves.
+ * =============================================================================
+ * COMPUTATION MODULE: series-diff.ts
+ * Shared-x Δ, trapezoidal ∫Δ, cumulative ΣΔ
+ * =============================================================================
  *
- * ALIGNMENT (when sample times / lengths differ)
- * ----------------------------------------------
- * 1. Overlap only: x ∈ [max(startA, startB), min(endA, endB)].
- *    If one trial ends earlier, points after the shorter end are dropped.
- * 2. Grid = sorted union of both trials' x in that overlap.
- * 3. At each grid x, linearly interpolate yA and yB (no extrapolation
- *    outside either series' own range).
- * 4. delta(x) = yA(x) − yB(x).
+ * USED BY
+ * -------
+ * - SensorPlot Diff / Cum Δ (exactly two trials)
+ * - AggregateSensorPlot Diff / Cum Δ (Set A fit − Set B fit)
+ * - norm-rate-run-stats.ts (per-run Light−Dark, etc.)
  *
- * Clock mode uses epoch ms; aligned mode uses minutes since each trial's
- * own session start — so "same x" means same wall clock or same elapsed
- * time, depending on the active plot mode.
+ * WHY SHARED-X + LINEAR INTERP
+ * ----------------------------
+ * Two trials rarely share identical sample clocks. Comparing raw arrays by
+ * index would mix different times. Instead we:
+ *   1. Restrict to overlap: [max(xA0,xB0), min(xAn,xBn)]
+ *   2. Build grid = sorted union of both series’ x inside overlap
+ *   3. Interpolate yA, yB at each grid x (no extrapolation)
+ *   4. Δ(x) = yA(x) − yB(x)
+ *
+ * “Same x” means same wall clock (calendar / clock align) OR same elapsed
+ * minutes since each trial’s own origin (session / trough) — the caller
+ * chooses the x definition before calling these helpers.
+ *
+ * INTEGRAL vs MEAN Δ
+ * ------------------
+ * Mean Δ = arithmetic mean of Δ samples (equal weight per grid point).
+ * ∫Δ dx / Δt = time-averaged Δ (weights by local spacing). They differ when
+ * sampling density varies along x. Both are reported in the Diff stats box.
+ *
+ * Cum Δ = running sum of Δ_i (not ∫Δ). It accumulates sample-wise differences;
+ * denser sampling → larger |Cum Δ| for the same physical curve. Prefer ∫ for
+ * time-weighted totals; Cum Δ is a qualitative “running gap” trace.
+ * =============================================================================
  */
 
 export type NumericSeries = {
@@ -27,7 +47,14 @@ export type SharedDifference = {
   name: string;
 };
 
-/** Linear interpolation; null if xq outside [xs[0], xs[n-1]]. xs ascending. */
+/**
+ * Linear interpolation on a sorted ascending x-grid.
+ *
+ *   Given x0 ≤ xq ≤ x1 with known y0, y1:
+ *     y(xq) = y0·(1−t) + y1·t,   t = (xq − x0) / (x1 − x0)
+ *
+ * Returns null if xq is outside [xs[0], xs[n−1]] (no extrapolation).
+ */
 export function interpAt(
   xs: number[],
   ys: number[],
@@ -52,8 +79,11 @@ export function interpAt(
 }
 
 /**
- * Δ(x) = yA(x) − yB(x) on the overlapping x-range of the two displayed curves.
- * Uses the union of sample x in the overlap; linear interp where needed.
+ * Δ(x) = yA(x) − yB(x) on the overlapping x-range.
+ *
+ * Grid = sorted unique union of A and B sample x in
+ *   [max(A.x[0], B.x[0]), min(A.x[end], B.x[end])].
+ * At each grid point, linearly interpolate both series, then subtract.
  */
 export function differenceOnSharedX(
   a: NumericSeries,
@@ -90,8 +120,13 @@ export function differenceOnSharedX(
 }
 
 /**
- * Trapezoidal integral of y over x.
- * When xIsEpochMs, dx is converted to minutes so rate×time units stay consistent.
+ * Trapezoidal integral ∫ y dx.
+ *
+ *   Σ_i  ½ (y_i + y_{i−1}) · Δx_i
+ *
+ * When xIsEpochMs, Δx is converted to minutes (Δx_ms / 60000) so that
+ * integrating a rate in [unit]/min yields [unit], matching elapsed-mode
+ * integrals where x is already in minutes.
  */
 export function trapzIntegral(
   x: number[],
@@ -126,7 +161,7 @@ export function overlapDurationMinutes(
 }
 
 export type IntegralDiffResult = {
-  /** ∫A dx − ∫B dx over overlap (dx in minutes). */
+  /** ∫ (yA − yB) dx over overlap (dx in minutes). */
   integralDelta: number;
   /** Length of overlapping x-range in minutes. */
   overlapMinutes: number;
@@ -135,9 +170,10 @@ export type IntegralDiffResult = {
 };
 
 /**
- * ∫_overlap yA dx − ∫_overlap yB dx on the shared grid
- * (= ∫ (yA − yB) dx), plus mean-from-integral = that / overlap minutes.
- * xIsEpochMs when x is wall-clock ms.
+ * ∫_overlap (yA − yB) dx  and  AvgΔ = that / overlapMinutes.
+ *
+ * Algebraically ∫(yA−yB) = ∫yA − ∫yB on the same grid. Units: if y is Norm Rate
+ * [(g/m³/min)/kPa] and dx is minutes → integral has units (g/m³)/kPa.
  */
 export function integralDifferenceOnSharedX(
   a: NumericSeries,
@@ -163,8 +199,12 @@ export function integralDifferenceOnSharedX(
 }
 
 /**
- * Running sum of delta: Cumulative_Delta[i] = Σ_{k=0..i} delta[k]
- * (skips non-finite samples without advancing the sum).
+ * Cumulative difference (sample-wise running sum).
+ *
+ *   CumΔ_i = Σ_{k≤i, finite} Δ_k
+ *
+ * Non-finite Δ samples are skipped (sum does not advance; CumΔ_i stays NaN
+ * until the first finite Δ). This is NOT a time integral — see trapzIntegral.
  */
 export function cumulativeSum(delta: number[]): number[] {
   const out = new Array<number>(delta.length).fill(Number.NaN);

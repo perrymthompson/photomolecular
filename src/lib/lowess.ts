@@ -76,7 +76,22 @@ export function maskLoessBoundaryArtifacts(
 
 /**
  * LOWESS / locally weighted regression (Cleveland), then edge-trim.
- * Span is a fraction of points in the window (matches R loess `span`).
+ *
+ * MATH (at each sorted abscissa x_i)
+ * ---------------------------------
+ * 1. Neighborhood size r = max(2, ⌊span · n⌋).
+ * 2. Expand [left, right] around i until it covers ~r points (nearest in x).
+ * 3. Bandwidth h = max(|x_i − x_left|, |x_right − x_i|).
+ * 4. Tricube weight for neighbor j:
+ *      u = |x_j − x_i| / h
+ *      w = (1 − u³)³   if u < 1, else 0
+ * 5. Weighted linear fit in the window:
+ *      μ_x = Σ w x / Σ w,   μ_y = Σ w y / Σ w
+ *      slope = Cov_w(x,y) / Var_w(x)
+ *      ŷ_i = μ_y + slope · (x_i − μ_x)
+ * 6. Edge trim: first/last ~trimFrac of fitted points → NaN.
+ *
+ * Span matches R `loess(..., span=)`; smaller span tracks lid-drop AH better.
  */
 export function lowess(
   x: number[],

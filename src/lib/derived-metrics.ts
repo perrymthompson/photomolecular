@@ -6,17 +6,27 @@
  *
  * SMOOTHING POLICY (Norm / Evap analysis)
  * ---------------------------------------
- *   AH_raw     = Magnus(RH_raw, T_raw)          // parse-csv / humidity.ts
+ *   AH_raw     = Magnus(RH_raw, T_raw)            // parse-csv / humidity.ts
  *   AH_fit     = applyLoessAndTrim(time, AH_raw)  // edges → NaN
- *   AH_rate    = Δ AH_fit / Δt; then edge-trim again (derivative bias)
+ *   AH_rate_i  = (AH_fit_i − AH_fit_{i−1}) / Δt_i // Δt in minutes
+ *                then edge-trim again (derivatives amplify residual bias)
  *
  *   RH_fit     = applyLoessAndTrim(time, RH_raw)
  *   T_fit      = applyLoessAndTrim(time, T_raw)
- *   VPD_fit    = Tetens(RH_fit, T_fit)          // NOT LOESS(VPD_raw)
- *   Norm_Rate  = AH_rate / VPD_fit              // NaN where either side is
+ *   VPD_fit    = Tetens(RH_fit, T_fit)            // NOT LOESS(VPD_raw)
+ *   Norm_Rate  = AH_rate / VPD_fit                // NaN where either side is
  *
- * Trough t_start = argmin of AH_fit in [sessionStart, sessionStart+40 min]
- * (skips non-finite / edge-trimmed samples).
+ * WHY LOESS(RH), LOESS(T) THEN VPD — NOT LOESS(VPD)
+ * ------------------------------------------------
+ * VPD = Psat(T)·(1 − RH/100) is nonlinear in T. Smoothing RH and T first,
+ * then applying Tetens, matches the physical inputs; smoothing VPD_raw would
+ * mix nonlinear artifacts.
+ *
+ * TROUGH t_start
+ * --------------
+ *   t_start = argmin_i AH_fit_i  for t ∈ [sessionStart, sessionStart + 40 min]
+ * (skips non-finite / edge-trimmed samples). Rates / Norm are blanked for
+ * t < t_start so pre-stabilization lid dynamics do not enter evaporation stats.
  *
  * FILE MAP
  * --------
@@ -29,6 +39,9 @@
  * | VPD raw      | vpdSeries(smooth:false) | Tetens(RH_raw, T_raw)                    |
  * | VPD fit      | vpdSeries(smooth:true)  | Tetens(LOESS(RH), LOESS(T)); edges NaN  |
  * | Norm_Rate    | normRateSeries        | AH_rate / VPD_fit                          |
+ *
+ * VERIFY: AH_rate should be ~0 before trough (NaN), then track the decline;
+ * Norm_Rate denominator uses VPD_fit, never raw VPD when smooth:true.
  * =============================================================================
  */
 
@@ -290,11 +303,18 @@ function maskBeforeReady(
 /**
  * Absolute humidity rate from the LOESS AH curve [g/m³/min].
  *
+ * DISCRETE DERIVATIVE
+ * -------------------
  *   AH_fit_i = applyLoessAndTrim(t, AH_raw)
  *   AH_rate_i = (AH_fit_i − AH_fit_{i−1}) / Δt_min
- *   then blank LOESS-scale edges again (derivatives amplify residual bias)
+ *             where Δt_min = (t_i − t_{i−1}) / 60000
  *
- * Samples before t_start are NaN. No sign filter.
+ * Skips pairs with Δt ≤ 0 or Δt > maxGapMs (sensor outage / full-res gap).
+ * Samples with t_i < t_start are left NaN (maskBeforeReady).
+ * Then blank LOESS-scale edges again — finite differences amplify any
+ * residual boundary bias that survived the first trim on AH_fit.
+ *
+ * No sign filter (positive and negative rates are kept).
  */
 export function ahRateSeries(
   points: SensorPoint[],
