@@ -51,12 +51,18 @@ function sessionStartMsForSeries(s: TrialSeries): number | null {
   return Number.isFinite(ms) ? ms : null;
 }
 
-/** Numeric (x, y) for one trial in the current plot mode. */
+/**
+ * Numeric (x, y) for one trial in the current plot mode.
+ * When `fromStartOnly` is true (aggregate default):
+ *   - session / AH trough: keep x ≥ 0 (at or after the alignment origin)
+ *   - clock time: keep wall time ≥ session start when that time is set
+ */
 export function trialNumericXY(
   s: TrialSeries,
   metric: MetricKey,
   mode: PlotMode,
   fullResolution: boolean,
+  fromStartOnly = true,
 ): NumericSeries | null {
   const startIso = sessionStartIso(
     s.points[0]?.time,
@@ -98,6 +104,16 @@ export function trialNumericXY(
     else if (mode === "trough") xv = (tMs - troughMs) / 60_000;
     else xv = (tMs - startMs) / 60_000;
     if (!Number.isFinite(xv)) continue;
+
+    if (fromStartOnly) {
+      if (mode === "aligned" || mode === "trough") {
+        if (xv < 0) continue;
+      } else if (sessionStartMs != null && Number.isFinite(sessionStartMs)) {
+        // Clock mode: only at/after this trial's session start.
+        if (tMs < sessionStartMs) continue;
+      }
+    }
+
     x.push(xv);
     y.push(ys[i]);
   }
@@ -114,8 +130,9 @@ export function trialNumericXY(
 export type OverlapRange = { xMin: number; xMax: number };
 
 /**
- * Shared x-window where every listed trial has data for this metric/mode.
- * Returns null if any trial is missing or the ranges do not intersect.
+ * Shared x-window where every listed trial has post-start data for this
+ * metric/mode. Overlap is computed after the from-start filter so the fit
+ * never uses pre-start samples or non-overlapping tails.
  */
 export function commonOverlapRange(
   seriesList: TrialSeries[],
@@ -127,10 +144,15 @@ export function commonOverlapRange(
   let xMin = -Infinity;
   let xMax = Infinity;
   for (const s of seriesList) {
-    const one = trialNumericXY(s, metric, mode, fullResolution);
+    const one = trialNumericXY(s, metric, mode, fullResolution, true);
     if (!one || one.x.length < 2) return null;
     xMin = Math.max(xMin, one.x[0]);
     xMax = Math.min(xMax, one.x[one.x.length - 1]);
+  }
+  if (!(xMax > xMin)) return null;
+  // Elapsed modes: never start the shared window before the origin.
+  if (mode === "aligned" || mode === "trough") {
+    xMin = Math.max(xMin, 0);
   }
   if (!(xMax > xMin)) return null;
   return { xMin, xMax };
@@ -138,8 +160,8 @@ export function commonOverlapRange(
 
 /**
  * Concatenate points from a set of trials, sorted by x.
- * When `overlap` is set, only points inside that window are kept (so the
- * aggregate / fit uses the period where all selected trials overlap).
+ * Uses post-start samples only; when `overlap` is set, further restricts to
+ * the shared window where all selected trials have data.
  */
 export function poolNumericXY(
   seriesList: TrialSeries[],
@@ -152,7 +174,7 @@ export function poolNumericXY(
   const x: number[] = [];
   const y: number[] = [];
   for (const s of seriesList) {
-    const one = trialNumericXY(s, metric, mode, fullResolution);
+    const one = trialNumericXY(s, metric, mode, fullResolution, true);
     if (!one) continue;
     for (let i = 0; i < one.x.length; i++) {
       const xv = one.x[i];
