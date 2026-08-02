@@ -387,9 +387,9 @@ function legendName(s: TrialSeries): string {
   return `${s.meta.label} · ${s.meta.filename.replace(/\.csv$/i, "")}`;
 }
 
-/** Short label for Diff / Cum Δ legend (same as trial legend when plot label set). */
+/** Chamber-only label for Diff / Cum Δ legend (avoids PNG legend truncation). */
 function diffLegendName(s: TrialSeries): string {
-  return legendName(s);
+  return s.meta.label;
 }
 
 /**
@@ -986,9 +986,10 @@ export function SensorPlot({
             if (Number.isFinite(v)) metricValues[mi].push(v);
           }
 
+          const diffHoverName = `Δ (${legendName(sA)} − ${legendName(sB)})`;
           const text = diff.y.map(
             (v, i) =>
-              `<span style="color:${DIFF_LINE_COLOR}">●</span> ${diff.name}<br>` +
+              `<span style="color:${DIFF_LINE_COLOR}">●</span> ${diffHoverName}<br>` +
               `${short} Δ ${v.toFixed(4)} ${unit}` +
               (isElapsedPlotMode(mode)
                 ? `<br>Elapsed ${diff.x[i].toFixed(2)} min`
@@ -1355,6 +1356,7 @@ export function SensorPlot({
       plot_bgcolor: plotTheme.bg,
       font: { color: plotTheme.text, family: plotFontFamily },
       showlegend: true,
+      // Cast: Plotly 3 supports entrywidth* at runtime; @types/plotly.js omits them.
       legend: {
         title: { text: "Trial" },
         orientation: "h",
@@ -1362,13 +1364,17 @@ export function SensorPlot({
         xanchor: "left",
         y: 1.02,
         yanchor: "bottom",
+        xref: "paper",
+        yref: "paper",
         bgcolor: "rgba(0,0,0,0)",
         borderwidth: 0,
-        // Keep the full legend inside the paper so PNG export does not clip it.
+        // Wrap entries within the paper so PNG export never clips legend text.
+        entrywidth: 0.3,
+        entrywidthmode: "fraction",
         tracegroupgap: 8,
         font: { color: plotTheme.text, family: plotFontFamily, size: 11 },
-      },
-      margin: { t: 96, r: 40, b: 56, l: 72 },
+      } as Partial<Layout>["legend"],
+      margin: { t: 110, r: 40, b: 56, l: 72 },
       hovermode: "x unified",
       hoverdistance: 20,
       uirevision: `sensor-plot-${colorMode}`,
