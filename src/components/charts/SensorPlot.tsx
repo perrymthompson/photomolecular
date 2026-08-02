@@ -1365,8 +1365,6 @@ export function SensorPlot({
         bgcolor: "rgba(0,0,0,0)",
         borderwidth: 0,
         // Keep the full legend inside the paper so PNG export does not clip it.
-        entrywidth: 0.42,
-        entrywidthmode: "fraction",
         tracegroupgap: 8,
         font: { color: plotTheme.text, family: plotFontFamily, size: 11 },
       },
