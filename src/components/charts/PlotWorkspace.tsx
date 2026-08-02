@@ -117,7 +117,7 @@ export function PlotWorkspace() {
   const [showBookmarks, setShowBookmarks] = useState(true);
   const [fullResolution, setFullResolution] = useState(false);
   const [poolLightDark, setPoolLightDark] = useState(false);
-  const [showDifference, setShowDifference] = useState(false);
+  const [showDifference, setShowDifference] = useState(true);
   const [showCumulativeDifference, setShowCumulativeDifference] =
     useState(false);
   const [loading, setLoading] = useState(false);
@@ -472,13 +472,10 @@ export function PlotWorkspace() {
     !isScatterView && visibleSeries.length === 2;
 
   useEffect(() => {
-    if (!canShowDifference && showDifference) {
-      setShowDifference(false);
-    }
     if (!canShowDifference && showCumulativeDifference) {
       setShowCumulativeDifference(false);
     }
-  }, [canShowDifference, showDifference, showCumulativeDifference]);
+  }, [canShowDifference, showCumulativeDifference]);
 
   const handleTrialUpdated = useCallback((updated: TrialMeta) => {
     startTransition(() => {

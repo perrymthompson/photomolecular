@@ -88,22 +88,78 @@ function exportThemeStyle(
   return style;
 }
 
+function isScrollContainer(el: HTMLElement): boolean {
+  const cs = getComputedStyle(el);
+  const ox = cs.overflowX;
+  const oy = cs.overflowY;
+  return (
+    ox === "auto" ||
+    ox === "scroll" ||
+    oy === "auto" ||
+    oy === "scroll" ||
+    cs.overflow === "auto" ||
+    cs.overflow === "scroll"
+  );
+}
+
+/** Expand nested overflow boxes so html-to-image captures the full table, not a scrolled clip. */
+function expandForCapture(root: HTMLElement): () => void {
+  const patched: { el: HTMLElement; cssText: string }[] = [];
+  const nodes = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))];
+  for (const el of nodes) {
+    if (!isScrollContainer(el)) continue;
+    patched.push({ el, cssText: el.style.cssText });
+    el.style.overflow = "visible";
+    el.style.overflowX = "visible";
+    el.style.overflowY = "visible";
+    el.style.maxHeight = "none";
+    el.style.maxWidth = "none";
+  }
+  return () => {
+    for (const { el, cssText } of patched) {
+      el.style.cssText = cssText;
+    }
+  };
+}
+
 async function downloadNodePng(
   node: HTMLElement,
   theme: ColorMode,
   filename: string,
 ): Promise<void> {
   const vars = EXPORT_THEME_VARS[theme];
-  const dataUrl = await toPng(node, {
-    pixelRatio: 2,
-    backgroundColor: vars.panel,
-    style: exportThemeStyle(theme),
-    cacheBust: true,
-  });
-  const a = document.createElement("a");
-  a.download = filename;
-  a.href = dataUrl;
-  a.click();
+  const restoreScroll = expandForCapture(node);
+  const prevRootCss = node.style.cssText;
+  node.style.width = "max-content";
+  node.style.maxWidth = "none";
+  node.style.height = "auto";
+  node.style.overflow = "visible";
+  try {
+    // One frame so layout reflects overflow:visible before measuring / cloning.
+    await new Promise<void>((r) => requestAnimationFrame(() => r()));
+    const width = Math.ceil(Math.max(node.scrollWidth, node.offsetWidth));
+    const height = Math.ceil(Math.max(node.scrollHeight, node.offsetHeight));
+    const dataUrl = await toPng(node, {
+      pixelRatio: 2,
+      backgroundColor: vars.panel,
+      width,
+      height,
+      style: {
+        ...exportThemeStyle(theme),
+        width: `${width}px`,
+        height: `${height}px`,
+        overflow: "visible",
+      },
+      cacheBust: true,
+    });
+    const a = document.createElement("a");
+    a.download = filename;
+    a.href = dataUrl;
+    a.click();
+  } finally {
+    node.style.cssText = prevRootCss;
+    restoreScroll();
+  }
 }
 
 function slugify(s: string): string {

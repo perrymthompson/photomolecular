@@ -130,7 +130,7 @@ export function AggregatePlotWorkspace() {
   const [showSmooth, setShowSmooth] = useState(true);
   const [fitKind, setFitKind] = useState<AggregateFitKind>("exp");
   const [fullResolution, setFullResolution] = useState(true);
-  const [showDifference, setShowDifference] = useState(false);
+  const [showDifference, setShowDifference] = useState(true);
   const [showCumulativeDifference, setShowCumulativeDifference] =
     useState(false);
   const [loading, setLoading] = useState(false);
@@ -508,11 +508,10 @@ export function AggregatePlotWorkspace() {
   const canShowDifference = visibleA.length > 0 && visibleB.length > 0;
 
   useEffect(() => {
-    if (!canShowDifference && showDifference) setShowDifference(false);
     if (!canShowDifference && showCumulativeDifference) {
       setShowCumulativeDifference(false);
     }
-  }, [canShowDifference, showDifference, showCumulativeDifference]);
+  }, [canShowDifference, showCumulativeDifference]);
 
   const bumpPlot = () => {
     setPlotBusy(true);
