@@ -390,6 +390,12 @@ function legendName(s: TrialSeries): string {
     : `${dup} · ${short}`;
 }
 
+/** Short label for Diff / Cum Δ legend (channel · condition — no filename). */
+function diffLegendName(s: TrialSeries): string {
+  const plotLabel = s.meta.plotLabel?.trim();
+  return plotLabel ? `${s.meta.label} · ${plotLabel}` : s.meta.label;
+}
+
 /**
  * Resolve a bookmark clock time onto the plot x-axis.
  * Calendar mode → ISO timestamp; aligned mode → minutes since session start.
@@ -946,9 +952,11 @@ export function SensorPlot({
     if (wantDiff || wantCum) {
       const [sA, sB] = current;
       metrics.forEach((metric, mi) => {
-        const a = seriesNumericXY(sA, metric, mode, fullResolution);
-        const b = seriesNumericXY(sB, metric, mode, fullResolution);
-        if (!a || !b) return;
+        const aRaw = seriesNumericXY(sA, metric, mode, fullResolution);
+        const bRaw = seriesNumericXY(sB, metric, mode, fullResolution);
+        if (!aRaw || !bRaw) return;
+        const a = { ...aRaw, label: diffLegendName(sA) };
+        const b = { ...bRaw, label: diffLegendName(sB) };
         const diff = differenceOnSharedX(a, b);
         if (!diff) return;
 
