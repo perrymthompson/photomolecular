@@ -80,13 +80,13 @@ export function TrialMetadataCsvPanel() {
   };
 
   return (
-    <div className="rounded-lg border border-[#3a3b3f] bg-[#1e1f22] p-4">
+    <div className="rounded-lg border border-border bg-panel p-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div>
-          <h2 className="text-sm font-medium text-white">Trial metadata CSV</h2>
-          <p className="mt-1 text-xs text-[#8a8a8d]">
-            Edit <code className="text-[#b5b5b8]">{TRIAL_METADATA_REL_PATH}</code>
-            , then use <strong className="font-normal text-[#b5b5b8]">Run DataImport</strong>{" "}
+          <h2 className="text-sm font-medium text-foreground">Trial metadata CSV</h2>
+          <p className="mt-1 text-xs text-faint">
+            Edit <code className="text-muted">{TRIAL_METADATA_REL_PATH}</code>
+            , then use <strong className="font-normal text-muted">Run DataImport</strong>{" "}
             above to push plot labels, session starts, and notes into the database.
           </p>
         </div>
@@ -95,7 +95,7 @@ export function TrialMetadataCsvPanel() {
             type="button"
             disabled={busy}
             onClick={() => void load()}
-            className="rounded border border-[#4C8FD1] px-3 py-1.5 text-xs font-medium text-[#4C8FD1] hover:bg-[#4C8FD1]/10 disabled:opacity-50"
+            className="rounded border border-steel px-3 py-1.5 text-xs font-medium text-steel hover:bg-steel/10 disabled:opacity-50"
           >
             {busy ? "Working…" : "Load CSV"}
           </button>
@@ -103,7 +103,7 @@ export function TrialMetadataCsvPanel() {
             type="button"
             disabled={busy || !loaded}
             onClick={() => void save()}
-            className="rounded bg-[#4C8FD1] px-3 py-1.5 text-xs font-medium text-white hover:brightness-110 disabled:opacity-50"
+            className="rounded bg-steel px-3 py-1.5 text-xs font-medium text-foreground hover:brightness-110 disabled:opacity-50"
           >
             {busy ? "Working…" : "Save CSV"}
           </button>
@@ -114,7 +114,7 @@ export function TrialMetadataCsvPanel() {
         rows={10}
         spellCheck={false}
         placeholder="Click Load CSV to open trial-metadata.csv…"
-        className="scrollbar-themed mt-3 w-full resize-y rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 font-mono text-xs text-[#e8e8e8]"
+        className="scrollbar-themed mt-3 w-full resize-y rounded border border-border bg-panel-elevated px-2 py-1.5 font-mono text-xs text-foreground"
         value={csvText}
         onChange={(e) => {
           setCsvText(e.target.value);
@@ -123,12 +123,12 @@ export function TrialMetadataCsvPanel() {
       />
 
       {dirty ? (
-        <p className="mt-2 text-xs text-[#F0AD4E]">Unsaved changes in editor.</p>
+        <p className="mt-2 text-xs text-warning">Unsaved changes in editor.</p>
       ) : null}
 
       {message ? (
         <p
-          className={`mt-2 text-xs ${ok ? "text-[#5CB85C]" : "text-[#E2574C]"}`}
+          className={`mt-2 text-xs ${ok ? "text-emerald-500" : "text-coral"}`}
         >
           {message}
         </p>

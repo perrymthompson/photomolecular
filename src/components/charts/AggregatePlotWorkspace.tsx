@@ -71,12 +71,12 @@ function ToggleGroup({
   title?: string;
 }) {
   return (
-    <div className="flex rounded border border-[#3a3b3f] p-0.5" title={title}>
+    <div className="flex rounded border border-border p-0.5" title={title}>
       <button
         type="button"
         onClick={() => onChange(true)}
         className={`rounded px-3 py-1.5 text-xs ${
-          on ? "bg-[#2a2b2e] text-white" : "text-[#b5b5b8] hover:text-white"
+          on ? "bg-surface-hover text-foreground" : "text-muted hover:text-foreground"
         }`}
       >
         {labelOn}
@@ -85,7 +85,7 @@ function ToggleGroup({
         type="button"
         onClick={() => onChange(false)}
         className={`rounded px-3 py-1.5 text-xs ${
-          !on ? "bg-[#2a2b2e] text-white" : "text-[#b5b5b8] hover:text-white"
+          !on ? "bg-surface-hover text-foreground" : "text-muted hover:text-foreground"
         }`}
       >
         {labelOff}
@@ -621,42 +621,42 @@ export function AggregatePlotWorkspace() {
   return (
     <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-6 px-4 py-6 lg:flex-row lg:items-start xl:px-6">
       <aside
-        className="relative flex shrink-0 flex-col rounded-lg border border-[#3a3b3f] bg-[#16171a] p-3"
+        className="relative flex shrink-0 flex-col rounded-lg border border-border bg-panel-elevated p-3"
         style={{ width: panelWidth, height: panelHeight }}
       >
-        <h2 className="mb-2 shrink-0 text-sm font-semibold text-white">
+        <h2 className="mb-2 shrink-0 text-sm font-semibold text-foreground">
           Aggregate sets
         </h2>
 
-        <div className="mb-2 flex shrink-0 rounded border border-[#3a3b3f] p-0.5">
+        <div className="mb-2 flex shrink-0 rounded border border-border p-0.5">
           <button
             type="button"
             onClick={() => setActiveSet("A")}
             className={`flex-1 rounded px-2 py-1.5 text-xs ${
               activeSet === "A"
-                ? "bg-[#4C8FD1]/25 text-white"
-                : "text-[#b5b5b8] hover:text-white"
+                ? "bg-steel/25 text-foreground"
+                : "text-muted hover:text-foreground"
             }`}
           >
             {labelA}{" "}
-            <span className="text-[#8a8a8d]">({idsA.length})</span>
+            <span className="text-faint">({idsA.length})</span>
           </button>
           <button
             type="button"
             onClick={() => setActiveSet("B")}
             className={`flex-1 rounded px-2 py-1.5 text-xs ${
               activeSet === "B"
-                ? "bg-[#E2574C]/25 text-white"
-                : "text-[#b5b5b8] hover:text-white"
+                ? "bg-coral/25 text-foreground"
+                : "text-muted hover:text-foreground"
             }`}
           >
             {labelB}{" "}
-            <span className="text-[#8a8a8d]">({idsB.length})</span>
+            <span className="text-faint">({idsB.length})</span>
           </button>
         </div>
 
         <div className="mb-2 shrink-0">
-          <label className="mb-1 block text-[10px] uppercase tracking-wide text-[#8a8a8d]">
+          <label className="mb-1 block text-[10px] uppercase tracking-wide text-faint">
             {activeSet === "A" ? "Set A name" : "Set B name"}
           </label>
           <input
@@ -667,12 +667,12 @@ export function AggregatePlotWorkspace() {
               if (activeSet === "A") setLabelA(v || "Set A");
               else setLabelB(v || "Set B");
             }}
-            className="w-full rounded border border-[#3a3b3f] bg-[#1e1f22] px-2 py-1 text-xs text-[#e8e8e8]"
+            className="w-full rounded border border-border bg-panel px-2 py-1 text-xs text-foreground"
           />
         </div>
 
         {overlapCount > 0 ? (
-          <p className="mb-2 shrink-0 text-[10px] text-[#F0AD4E]">
+          <p className="mb-2 shrink-0 text-[10px] text-warning">
             {overlapCount} trial{overlapCount === 1 ? "" : "s"} in both sets
           </p>
         ) : null}
@@ -716,7 +716,7 @@ export function AggregatePlotWorkspace() {
 
       <section className="min-w-0 flex-1 space-y-4">
         <div className="flex flex-wrap items-center gap-3">
-          <div className="flex flex-wrap rounded border border-[#3a3b3f] p-0.5">
+          <div className="flex flex-wrap rounded border border-border p-0.5">
             {(
               [
                 ["combined", "Combined"],
@@ -734,8 +734,8 @@ export function AggregatePlotWorkspace() {
                 onClick={() => setViewAndRefresh(k)}
                 className={`rounded px-3 py-1.5 text-xs ${
                   view === k
-                    ? "bg-[#2a2b2e] text-white"
-                    : "text-[#b5b5b8] hover:text-white"
+                    ? "bg-surface-hover text-foreground"
+                    : "text-muted hover:text-foreground"
                 }`}
               >
                 {label}
@@ -743,14 +743,14 @@ export function AggregatePlotWorkspace() {
             ))}
           </div>
 
-          <div className="flex rounded border border-[#3a3b3f] p-0.5">
+          <div className="flex rounded border border-border p-0.5">
             <button
               type="button"
               onClick={() => setModeAndRefresh("calendar")}
               className={`rounded px-3 py-1.5 text-xs ${
                 mode === "calendar"
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
               title="Wall-clock time (best when trials share the same day)"
             >
@@ -767,8 +767,8 @@ export function AggregatePlotWorkspace() {
               }
               className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
                 mode === "aligned"
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               Session start
@@ -784,8 +784,8 @@ export function AggregatePlotWorkspace() {
               }
               className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
                 mode === "trough"
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               AH trough
@@ -801,7 +801,7 @@ export function AggregatePlotWorkspace() {
           />
 
           <div
-            className="flex rounded border border-[#3a3b3f] p-0.5"
+            className="flex rounded border border-border p-0.5"
             title={
               fitKind === "exp"
                 ? "Exponential fit: y = a·e^(b·x) via log-linear OLS (y > 0 only)"
@@ -813,8 +813,8 @@ export function AggregatePlotWorkspace() {
               onClick={() => setFitKindAndRefresh("exp")}
               className={`rounded px-3 py-1.5 text-xs ${
                 fitKind === "exp"
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               Exp
@@ -824,8 +824,8 @@ export function AggregatePlotWorkspace() {
               onClick={() => setFitKindAndRefresh("loess")}
               className={`rounded px-3 py-1.5 text-xs ${
                 fitKind === "loess"
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               LOESS
@@ -833,7 +833,7 @@ export function AggregatePlotWorkspace() {
           </div>
 
           <div
-            className="flex rounded border border-[#3a3b3f] p-0.5"
+            className="flex rounded border border-border p-0.5"
             title={
               canShowDifference
                 ? `Δ = ${labelA} fit − ${labelB} fit on shared x`
@@ -846,8 +846,8 @@ export function AggregatePlotWorkspace() {
               onClick={() => setDifferenceAndRefresh(true)}
               className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
                 showDifference && canShowDifference
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               Diff on
@@ -858,8 +858,8 @@ export function AggregatePlotWorkspace() {
               onClick={() => setDifferenceAndRefresh(false)}
               className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
                 !showDifference || !canShowDifference
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               Diff off
@@ -867,7 +867,7 @@ export function AggregatePlotWorkspace() {
           </div>
 
           <div
-            className="flex rounded border border-[#3a3b3f] p-0.5"
+            className="flex rounded border border-border p-0.5"
             title={
               canShowDifference
                 ? "Running sum of Δ over the overlapping range"
@@ -880,8 +880,8 @@ export function AggregatePlotWorkspace() {
               onClick={() => setCumulativeDifferenceAndRefresh(true)}
               className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
                 showCumulativeDifference && canShowDifference
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               Cum Δ on
@@ -892,8 +892,8 @@ export function AggregatePlotWorkspace() {
               onClick={() => setCumulativeDifferenceAndRefresh(false)}
               className={`rounded px-3 py-1.5 text-xs disabled:cursor-not-allowed disabled:opacity-40 ${
                 !showCumulativeDifference || !canShowDifference
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               Cum Δ off
@@ -909,15 +909,15 @@ export function AggregatePlotWorkspace() {
           />
 
           {loading || plotBusy ? (
-            <span className="flex items-center gap-2 text-xs text-[#8a8a8d]">
-              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-[#4C8FD1] border-t-transparent" />
+            <span className="flex items-center gap-2 text-xs text-faint">
+              <span className="inline-block h-3 w-3 animate-spin rounded-full border-2 border-steel border-t-transparent" />
               {loading ? "Loading data…" : "Updating plot…"}
             </span>
           ) : null}
         </div>
 
         {error ? (
-          <p className="rounded border border-[#E2574C]/40 bg-[#E2574C]/10 px-3 py-2 text-sm text-[#E2574C]">
+          <p className="rounded border border-[color:var(--danger-border)] bg-[color:var(--danger-bg)] px-3 py-2 text-sm text-coral">
             {error}
           </p>
         ) : null}
@@ -928,9 +928,9 @@ export function AggregatePlotWorkspace() {
               className={`relative ${loading || plotBusy ? "pointer-events-none" : ""}`}
             >
               {(loading || plotBusy) && hasPlot ? (
-                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-[#1e1f22]/70 backdrop-blur-[1px]">
-                  <span className="flex items-center gap-2 text-sm text-[#e8e8e8]">
-                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#4C8FD1] border-t-transparent" />
+                <div className="absolute inset-0 z-10 flex items-center justify-center rounded-lg bg-panel/70 backdrop-blur-[1px]">
+                  <span className="flex items-center gap-2 text-sm text-foreground">
+                    <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-steel border-t-transparent" />
                     Loading plot…
                   </span>
                 </div>
@@ -955,7 +955,7 @@ export function AggregatePlotWorkspace() {
                   }
                 />
               ) : (
-                <div className="flex h-[520px] items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
+                <div className="flex h-[520px] items-center justify-center rounded-lg border border-border bg-panel text-muted">
                   {isElapsedPlotMode(mode) && allSelectedIds.length > 0
                     ? mode === "trough"
                       ? "Selected trials need a detectable AH trough (check session starts / early AH data)."
@@ -977,17 +977,17 @@ export function AggregatePlotWorkspace() {
         </div>
 
         {droppedSeriesNotes.length > 0 ? (
-          <div className="rounded border border-[#F0AD4E]/35 bg-[#F0AD4E]/10 px-3 py-2.5 text-xs text-[#e8e8e8]">
-            <div className="mb-1.5 font-medium text-[#F0AD4E]">
+          <div className="rounded border border-[color:var(--warning-border)] bg-[color:var(--warning-bg)] px-3 py-2.5 text-xs text-foreground">
+            <div className="mb-1.5 font-medium text-warning">
               Dropped series ({droppedSeriesNotes.length}) — selected but not
               used in the current plot
             </div>
-            <ul className="list-inside list-disc space-y-1 text-[#c8c8cb]">
+            <ul className="list-inside list-disc space-y-1 text-muted">
               {droppedSeriesNotes.map((d) => (
                 <li key={d.id}>
-                  <span className="text-white">{d.label}</span>
-                  <span className="text-[#8a8a8d]"> · {d.sets}</span>
-                  <span className="text-[#b5b5b8]"> — {d.reason}</span>
+                  <span className="text-foreground">{d.label}</span>
+                  <span className="text-faint"> · {d.sets}</span>
+                  <span className="text-muted"> — {d.reason}</span>
                 </li>
               ))}
             </ul>

@@ -83,17 +83,17 @@ export function PlotBookmarkAdd({ series, onSaved, prefill }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-[#3a3b3f] bg-[#16171a] p-4">
-      <h3 className="text-sm font-medium text-white">Add plot bookmark</h3>
-      <p className="mt-1 text-xs text-[#8a8a8d]">
+    <div className="rounded-lg border border-border bg-panel-elevated p-4">
+      <h3 className="text-sm font-medium text-foreground">Add plot bookmark</h3>
+      <p className="mt-1 text-xs text-faint">
         Quick note at a clock time for a trial currently plotted. Click a time
         on the plot to fill Trial + Time. Full edit list is on the Dashboard.
       </p>
       <div className="mt-3 grid gap-3 sm:grid-cols-[1.2fr_0.8fr_1.4fr_auto]">
-        <label className="block text-xs text-[#b5b5b8]">
+        <label className="block text-xs text-muted">
           Trial
           <select
-            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#1e1f22] px-2 py-1.5 text-sm text-[#e8e8e8]"
+            className="mt-1 w-full rounded border border-border bg-panel px-2 py-1.5 text-sm text-foreground"
             value={activeId}
             onChange={(e) => setTrialId(e.target.value)}
           >
@@ -104,19 +104,19 @@ export function PlotBookmarkAdd({ series, onSaved, prefill }: Props) {
             ))}
           </select>
         </label>
-        <label className="block text-xs text-[#b5b5b8]">
+        <label className="block text-xs text-muted">
           Time (HH:MM:SS)
           <input
-            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#1e1f22] px-2 py-1.5 text-sm text-[#e8e8e8]"
+            className="mt-1 w-full rounded border border-border bg-panel px-2 py-1.5 text-sm text-foreground"
             placeholder="06:00:00"
             value={time}
             onChange={(e) => setTime(e.target.value)}
           />
         </label>
-        <label className="block text-xs text-[#b5b5b8]">
+        <label className="block text-xs text-muted">
           Note
           <input
-            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#1e1f22] px-2 py-1.5 text-sm text-[#e8e8e8]"
+            className="mt-1 w-full rounded border border-border bg-panel px-2 py-1.5 text-sm text-foreground"
             placeholder="Turned UV on"
             value={note}
             onChange={(e) => setNote(e.target.value)}
@@ -126,14 +126,14 @@ export function PlotBookmarkAdd({ series, onSaved, prefill }: Props) {
           type="button"
           disabled={busy}
           onClick={() => void add()}
-          className="self-end rounded bg-[#E2574C] px-3 py-1.5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50"
+          className="self-end rounded bg-coral px-3 py-1.5 text-sm font-medium text-foreground hover:brightness-110 disabled:opacity-50"
         >
           {busy ? "Adding…" : "Add"}
         </button>
       </div>
       {status ? (
         <p
-          className={`mt-2 text-xs ${statusOk ? "text-[#5CB85C]" : "text-[#E2574C]"}`}
+          className={`mt-2 text-xs ${statusOk ? "text-emerald-500" : "text-coral"}`}
         >
           {status}
         </p>

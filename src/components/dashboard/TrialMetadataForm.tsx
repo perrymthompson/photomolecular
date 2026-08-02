@@ -57,55 +57,55 @@ export function TrialMetadataForm({ trial, onSaved, onDeleted }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-[#3a3b3f] bg-[#1e1f22] p-4">
+    <div className="rounded-lg border border-border bg-panel p-4">
       <div className="mb-3 flex items-start justify-between gap-2">
         <div>
-          <h3 className="font-medium text-white">{trial.filename}</h3>
+          <h3 className="font-medium text-foreground">{trial.filename}</h3>
           {trial.dateLabel ? (
-            <p className="text-xs text-[#8a8a8d]">{trial.dateLabel}</p>
+            <p className="text-xs text-faint">{trial.dateLabel}</p>
           ) : null}
         </div>
         <button
           type="button"
           onClick={remove}
           disabled={busy}
-          className="text-xs text-[#E2574C] hover:underline disabled:opacity-50"
+          className="text-xs text-coral hover:underline disabled:opacity-50"
         >
           Delete
         </button>
       </div>
       <div className="grid gap-3 sm:grid-cols-3">
-        <label className="block text-xs text-[#b5b5b8]">
+        <label className="block text-xs text-muted">
           Channel
           <input
-            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#8a8a8d]"
+            className="mt-1 w-full rounded border border-border bg-panel-elevated px-2 py-1.5 text-sm text-faint"
             value={trial.label}
             readOnly
           />
         </label>
-        <label className="block text-xs text-[#b5b5b8] sm:col-span-2">
+        <label className="block text-xs text-muted sm:col-span-2">
           Plot label
           <input
-            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#e8e8e8]"
+            className="mt-1 w-full rounded border border-border bg-panel-elevated px-2 py-1.5 text-sm text-foreground"
             placeholder='e.g. "Dark" or "Light, 45°"'
             value={plotLabel}
             onChange={(e) => setPlotLabel(e.target.value)}
           />
         </label>
-        <label className="block text-xs text-[#b5b5b8] sm:col-span-3">
+        <label className="block text-xs text-muted sm:col-span-3">
           Session start (HH:MM:SS, 24h)
           <input
-            className="mt-1 w-full rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#e8e8e8]"
+            className="mt-1 w-full rounded border border-border bg-panel-elevated px-2 py-1.5 text-sm text-foreground"
             placeholder="12:38:00"
             value={sessionStartTime}
             onChange={(e) => setSessionStartTime(e.target.value)}
           />
         </label>
-        <label className="block text-xs text-[#b5b5b8] sm:col-span-3">
+        <label className="block text-xs text-muted sm:col-span-3">
           Notes
           <textarea
             rows={4}
-            className="scrollbar-themed mt-1 w-full resize-y rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#e8e8e8]"
+            className="scrollbar-themed mt-1 w-full resize-y rounded border border-border bg-panel-elevated px-2 py-1.5 text-sm text-foreground"
             value={notes}
             onChange={(e) => setNotes(e.target.value)}
           />
@@ -116,11 +116,11 @@ export function TrialMetadataForm({ trial, onSaved, onDeleted }: Props) {
           type="button"
           onClick={save}
           disabled={busy}
-          className="rounded bg-[#4C8FD1] px-3 py-1.5 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50"
+          className="rounded bg-steel px-3 py-1.5 text-sm font-medium text-foreground hover:brightness-110 disabled:opacity-50"
         >
           {busy ? "Saving…" : "Save"}
         </button>
-        {status ? <span className="text-xs text-[#b5b5b8]">{status}</span> : null}
+        {status ? <span className="text-xs text-muted">{status}</span> : null}
       </div>
 
       <TrialBookmarksEditor trial={trial} onSaved={onSaved} />

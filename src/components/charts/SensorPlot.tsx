@@ -51,7 +51,8 @@ import type {
   PlotMouseEvent,
   Shape,
 } from "plotly.js";
-import { DARK_THEME, trialColorMapById } from "@/lib/colors";
+import { plotThemeFor, trialColorMapById } from "@/lib/colors";
+import { useTheme } from "@/components/theme/ThemeProvider";
 import {
   ahRateSeries,
   type AhRateOptions,
@@ -611,6 +612,16 @@ export function SensorPlot({
   showCumulativeDifference = false,
   onTimePick,
 }: Props) {
+  const { mode: colorMode } = useTheme();
+  const plotTheme = useMemo(() => plotThemeFor(colorMode), [colorMode]);
+  const [plotFontFamily, setPlotFontFamily] = useState(
+    "Source Sans 3, sans-serif",
+  );
+  useEffect(() => {
+    const family = getComputedStyle(document.body).fontFamily;
+    if (family) setPlotFontFamily(family);
+  }, []);
+
   // Lazy-load Plotly only when we have data (keeps initial bundle smaller).
   const [PlotComponent, setPlotComponent] = useState<ComponentType<{
     data: Data[];
@@ -927,7 +938,7 @@ export function SensorPlot({
         x1: 0,
         y0: 0,
         y1: 1,
-        line: { color: DARK_THEME.subtext, width: 1, dash: "dot" },
+        line: { color: plotTheme.subtext, width: 1, dash: "dot" },
       });
     }
 
@@ -1088,13 +1099,13 @@ export function SensorPlot({
       yAxes[key] = {
         title: {
           text: titleText,
-          font: { size: 11, color: DARK_THEME.text },
+          font: { size: 11, color: plotTheme.text },
         },
         domain: [Math.max(0, bottom), top - 0.02],
-        gridcolor: DARK_THEME.gridMajor,
+        gridcolor: plotTheme.gridMajor,
         zeroline: true,
-        zerolinecolor: DARK_THEME.subtext,
-        tickfont: { color: DARK_THEME.subtext, size: 10 },
+        zerolinecolor: plotTheme.subtext,
+        tickfont: { color: plotTheme.subtext, size: 10 },
         automargin: true,
         autorange: false,
         range: paddedRange(metricValues[panel]),
@@ -1104,7 +1115,7 @@ export function SensorPlot({
     return { traces, meta, shapes, yAxes, n, diffStats };
     // pointsKey stands in for series samples; colors keyed by trial ids in pointsKey.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [pointsKey, mode, metrics, colors, showSmooth, fullResolution, showDifference, showCumulativeDifference]);
+  }, [pointsKey, mode, metrics, colors, showSmooth, fullResolution, showDifference, showCumulativeDifference, plotTheme]);
 
   /** Cheap layer: bookmark markers + guide lines only. */
   const bookmarkLayer = useMemo(() => {
@@ -1306,9 +1317,8 @@ export function SensorPlot({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [bookmarksKey, showBookmarks, mode, metrics, colors, pointsKey]);
 
-  const layout = useMemo(() => {
+  const chartTitle = useMemo(() => {
     const current = seriesRef.current;
-
     const dateLabels = uniqueDateLabels(current.map((s) => s.meta));
     const datePart =
       dateLabels.length === 0
@@ -1330,27 +1340,26 @@ export function SensorPlot({
             ? `${METRIC_LABELS[metrics[0]]} vs Time`
             : "Absolute Humidity, Relative Humidity & Temperature vs Time";
 
+    return datePart ? `${titleBase} — ${datePart}` : titleBase;
+  }, [mode, metrics, plotLabelsKey, pointsKey]);
+
+  const layout = useMemo(() => {
     const layoutObj: Partial<Layout> = {
-      title: {
-        text: datePart ? `${titleBase} — ${datePart}` : titleBase,
-        font: { color: "#ffffff", size: 15 },
-        x: 0.01,
-        xanchor: "left",
-      },
+      title: undefined,
       annotations: [],
-      paper_bgcolor: DARK_THEME.bg,
-      plot_bgcolor: DARK_THEME.bg,
-      font: { color: DARK_THEME.text },
+      paper_bgcolor: plotTheme.bg,
+      plot_bgcolor: plotTheme.bg,
+      font: { color: plotTheme.text, family: plotFontFamily },
       showlegend: true,
       legend: {
         title: { text: "Trial" },
-        bgcolor: DARK_THEME.bg,
-        font: { color: DARK_THEME.text },
+        bgcolor: plotTheme.bg,
+        font: { color: plotTheme.text, family: plotFontFamily },
       },
-      margin: { t: 56, r: 24, b: 56, l: 72 },
+      margin: { t: 40, r: 24, b: 56, l: 72 },
       hovermode: "x unified",
       hoverdistance: 20,
-      uirevision: "sensor-plot",
+      uirevision: `sensor-plot-${colorMode}`,
       shapes: [...base.shapes, ...bookmarkLayer.shapes],
       xaxis: {
         title: {
@@ -1360,15 +1369,19 @@ export function SensorPlot({
               : mode === "trough"
                 ? "Elapsed Time Since AH Trough (minutes)"
                 : "Time",
-          font: { color: DARK_THEME.text, size: 11 },
+          font: { color: plotTheme.text, size: 11, family: plotFontFamily },
         },
-        gridcolor: DARK_THEME.gridMajor,
-        tickfont: { color: DARK_THEME.subtext, size: 10 },
+        gridcolor: plotTheme.gridMajor,
+        tickfont: {
+          color: plotTheme.subtext,
+          size: 10,
+          family: plotFontFamily,
+        },
         showspikes: true,
         spikemode: "across",
         spikethickness: 1,
         spikedash: "dot",
-        spikecolor: DARK_THEME.subtext,
+        spikecolor: plotTheme.subtext,
         anchor: (base.n > 1 ? `y${base.n}` : "y") as LayoutAxis["anchor"],
         ...(mode === "calendar"
           ? { type: "date" as const, tickformat: "%H:%M" }
@@ -1379,7 +1392,7 @@ export function SensorPlot({
     };
     return layoutObj;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, bookmarkLayer, mode, metrics, height, plotLabelsKey, pointsKey]);
+  }, [base, bookmarkLayer, mode, metrics, height, plotLabelsKey, pointsKey, plotTheme, plotFontFamily, colorMode]);
 
   const data = useMemo(
     () => [...base.traces, ...bookmarkLayer.traces],
@@ -1438,7 +1451,7 @@ export function SensorPlot({
 
   if (series.length === 0) {
     return (
-      <div className="flex h-80 items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
+      <div className="flex h-80 items-center justify-center rounded-lg border border-border bg-panel text-muted">
         Select one or more trials to plot.
       </div>
     );
@@ -1446,14 +1459,14 @@ export function SensorPlot({
 
   if (!PlotComponent) {
     return (
-      <div className="flex h-80 items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
+      <div className="flex h-80 items-center justify-center rounded-lg border border-border bg-panel text-muted">
         Loading plot…
       </div>
     );
   }
 
   // Remount only when the set of trials / view mode changes — not on bookmark edits.
-  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}|${showDifference ? "diff" : "nodiff"}|${showCumulativeDifference ? "cum" : "nocum"}`;
+  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}|${showDifference ? "diff" : "nodiff"}|${showCumulativeDifference ? "cum" : "nocum"}|${colorMode}`;
 
   const showStatsBox =
     (showDifference || showCumulativeDifference) &&
@@ -1461,10 +1474,14 @@ export function SensorPlot({
     base.diffStats.length > 0;
 
   return (
-    <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
+    <div className="space-y-2">
+      <h2 className="px-0.5 text-sm font-semibold leading-snug text-foreground">
+        {chartTitle}
+      </h2>
+      <div className="overflow-hidden rounded-lg border border-border bg-panel">
       {showStatsBox ? (
-        <div className="space-y-2 border-b border-[#3a3b3f] px-3 py-2.5">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-[#8a8a8d]">
+        <div className="space-y-2 border-b border-border px-3 py-2.5">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-faint">
             Paired difference stats (first − second selected · overlap only)
           </div>
           <div className="flex flex-wrap gap-2">
@@ -1473,24 +1490,24 @@ export function SensorPlot({
               return (
                 <div
                   key={row.metric}
-                  className="min-w-[220px] flex-1 rounded border border-[#3a3b3f] bg-[#16171a] px-3 py-2 text-xs text-[#e8e8e8]"
+                  className="min-w-[220px] flex-1 rounded border border-border bg-panel-elevated px-3 py-2 text-xs text-foreground"
                 >
-                  <div className="mb-1 font-semibold text-[#E8C547]">
+                  <div className="mb-1 font-semibold text-warning">
                     {row.label} Δ
-                    <span className="ml-2 font-normal text-[#8a8a8d]">
+                    <span className="ml-2 font-normal text-faint">
                       n={n}
                     </span>
                   </div>
-                  <div className="grid gap-0.5 text-[#c8c8cb]">
+                  <div className="grid gap-0.5 text-muted">
                     <div>
                       Mean Δ{" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {formatSigned(meanDelta)} {row.unit}
                       </span>
                     </div>
                     <div>
                       ∫A−∫B{" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {row.integralDelta == null
                           ? "—"
                           : `${formatSigned(row.integralDelta)} ${row.integralUnit}`}
@@ -1498,13 +1515,13 @@ export function SensorPlot({
                     </div>
                     <div>
                       Avg Δ (∫/Δt){" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {row.meanFromIntegral == null
                           ? "—"
                           : `${formatSigned(row.meanFromIntegral)} ${row.unit}`}
                       </span>
                       {row.overlapMinutes != null ? (
-                        <span className="text-[#8a8a8d]">
+                        <span className="text-faint">
                           {" "}
                           · {row.overlapMinutes.toFixed(1)} min overlap
                         </span>
@@ -1512,19 +1529,19 @@ export function SensorPlot({
                     </div>
                     <div>
                       t=
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {formatSigned(tStatistic, 3)}
                       </span>
                       {" · p="}
-                      <span className="text-white">{formatPValue(pValue)}</span>
+                      <span className="text-foreground">{formatPValue(pValue)}</span>
                     </div>
                     <div>
                       95% CI [{" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {formatSigned(ci95[0])}
                       </span>
                       ,{" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {formatSigned(ci95[1])}
                       </span>{" "}
                       ]
@@ -1561,6 +1578,7 @@ export function SensorPlot({
         }}
         onClick={handleClick}
       />
+      </div>
     </div>
   );
 }

@@ -14,7 +14,7 @@ type Props = {
 function Chevron({ open }: { open: boolean }) {
   return (
     <span
-      className={`inline-block text-[#8a8a8d] transition-transform ${open ? "rotate-90" : ""}`}
+      className={`inline-block text-faint transition-transform ${open ? "rotate-90" : ""}`}
     >
       ▶
     </span>
@@ -55,7 +55,7 @@ export function TrialTree({ trials, onSaved, onDeleted }: Props) {
   };
 
   if (trials.length === 0) {
-    return <p className="text-sm text-[#8a8a8d]">No trials uploaded yet.</p>;
+    return <p className="text-sm text-faint">No trials uploaded yet.</p>;
   }
 
   return (
@@ -66,23 +66,23 @@ export function TrialTree({ trials, onSaved, onDeleted }: Props) {
         return (
           <div
             key={day}
-            className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#16171a]"
+            className="overflow-hidden rounded-lg border border-border bg-panel-elevated"
           >
             <button
               type="button"
               onClick={() => toggleDay(day)}
-              className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-[#1e1f22]"
+              className="flex w-full items-center gap-2 px-3 py-2.5 text-left hover:bg-panel"
             >
               <Chevron open={dayOpen} />
-              <span className="flex-1 text-sm font-medium text-white">{day}</span>
-              <span className="text-xs text-[#8a8a8d]">
+              <span className="flex-1 text-sm font-medium text-foreground">{day}</span>
+              <span className="text-xs text-faint">
                 {runs.length} run{runs.length === 1 ? "" : "s"} · {trialCount} file
                 {trialCount === 1 ? "" : "s"}
               </span>
             </button>
 
             {dayOpen ? (
-              <div className="border-t border-[#3a3b3f] px-2 pb-2 pt-1">
+              <div className="border-t border-border px-2 pb-2 pt-1">
                 {runs.map(({ run, items }) => {
                   const runKey = `${day}::${run}`;
                   const runOpen = openRuns.has(runKey);
@@ -91,17 +91,17 @@ export function TrialTree({ trials, onSaved, onDeleted }: Props) {
                       <button
                         type="button"
                         onClick={() => toggleRun(runKey)}
-                        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[#1e1f22]"
+                        className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-panel"
                       >
                         <Chevron open={runOpen} />
-                        <span className="text-sm text-[#e8e8e8]">{run}</span>
-                        <span className="text-xs text-[#8a8a8d]">
+                        <span className="text-sm text-foreground">{run}</span>
+                        <span className="text-xs text-faint">
                           {items.length} file{items.length === 1 ? "" : "s"}
                         </span>
                       </button>
 
                       {runOpen ? (
-                        <div className="ml-4 space-y-1 border-l border-[#3a3b3f] pl-2">
+                        <div className="ml-4 space-y-1 border-l border-border pl-2">
                           {items.map((trial) => {
                             const trialOpen = openTrials.has(trial.id);
                             return (
@@ -109,13 +109,13 @@ export function TrialTree({ trials, onSaved, onDeleted }: Props) {
                                 <button
                                   type="button"
                                   onClick={() => toggleTrial(trial.id)}
-                                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-[#1e1f22]"
+                                  className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left hover:bg-panel"
                                 >
                                   <Chevron open={trialOpen} />
-                                  <span className="truncate text-sm text-[#e8e8e8]">
+                                  <span className="truncate text-sm text-foreground">
                                     {trial.label}
                                   </span>
-                                  <span className="truncate text-xs text-[#8a8a8d]">
+                                  <span className="truncate text-xs text-faint">
                                     {trial.filename}
                                   </span>
                                 </button>

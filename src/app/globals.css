@@ -1,6 +1,11 @@
 @import "tailwindcss";
 
-:root {
+/*
+ * Site color themes (display only).
+ * Toggle via document.documentElement[data-theme="dark"|"light"].
+ */
+:root,
+html[data-theme="dark"] {
   --background: #121316;
   --foreground: #e8e8e8;
   --panel: #1e1f22;
@@ -8,13 +13,55 @@
   --border: #3a3b3f;
   --muted: #b5b5b8;
   --faint: #8a8a8d;
+  --surface: #25262a;
+  --surface-hover: #2a2b2e;
+  --scrollbar-track: #1a1b1e;
+  --scrollbar-thumb: #4a4b4f;
+  --scrollbar-thumb-hover: #5c5d61;
   --coral: #e2574c;
   --steel: #4c8fd1;
+  --warning: #f0ad4e;
+  --danger-bg: color-mix(in srgb, var(--coral) 10%, transparent);
+  --danger-border: color-mix(in srgb, var(--coral) 40%, transparent);
+  --warning-bg: color-mix(in srgb, var(--warning) 10%, transparent);
+  --warning-border: color-mix(in srgb, var(--warning) 35%, transparent);
+}
+
+html[data-theme="light"] {
+  --background: #f4f5f7;
+  --foreground: #1a1b1e;
+  --panel: #ffffff;
+  --panel-elevated: #ffffff;
+  --border: #d0d3d9;
+  --muted: #5c5f66;
+  --faint: #8a8d93;
+  --surface: #eef0f3;
+  --surface-hover: #e4e6eb;
+  --scrollbar-track: #e8eaee;
+  --scrollbar-thumb: #b4b8c0;
+  --scrollbar-thumb-hover: #9a9ea6;
+  --coral: #d6453a;
+  --steel: #3a7fc0;
+  --warning: #c98a1a;
+  --danger-bg: color-mix(in srgb, var(--coral) 12%, white);
+  --danger-border: color-mix(in srgb, var(--coral) 35%, transparent);
+  --warning-bg: color-mix(in srgb, var(--warning) 12%, white);
+  --warning-border: color-mix(in srgb, var(--warning) 35%, transparent);
 }
 
 @theme inline {
   --color-background: var(--background);
   --color-foreground: var(--foreground);
+  --color-panel: var(--panel);
+  --color-panel-elevated: var(--panel-elevated);
+  --color-border: var(--border);
+  --color-muted: var(--muted);
+  --color-faint: var(--faint);
+  --color-surface: var(--surface);
+  --color-surface-hover: var(--surface-hover);
+  --color-coral: var(--coral);
+  --color-steel: var(--steel);
+  --color-warning: var(--warning);
   --font-sans: var(--font-sans);
   --font-mono: var(--font-mono);
 }
@@ -30,10 +77,9 @@ code {
   font-size: 0.9em;
 }
 
-/* Dark-theme scrollbars for trial lists, notes, etc. */
 .scrollbar-themed {
   scrollbar-width: thin;
-  scrollbar-color: #4a4b4f #1a1b1e;
+  scrollbar-color: var(--scrollbar-thumb) var(--scrollbar-track);
 }
 
 .scrollbar-themed::-webkit-scrollbar {
@@ -42,20 +88,20 @@ code {
 }
 
 .scrollbar-themed::-webkit-scrollbar-track {
-  background: #1a1b1e;
+  background: var(--scrollbar-track);
   border-radius: 4px;
 }
 
 .scrollbar-themed::-webkit-scrollbar-thumb {
-  background: #4a4b4f;
+  background: var(--scrollbar-thumb);
   border-radius: 4px;
-  border: 2px solid #1a1b1e;
+  border: 2px solid var(--scrollbar-track);
 }
 
 .scrollbar-themed::-webkit-scrollbar-thumb:hover {
-  background: #5c5d61;
+  background: var(--scrollbar-thumb-hover);
 }
 
 .scrollbar-themed::-webkit-scrollbar-corner {
-  background: #1a1b1e;
+  background: var(--scrollbar-track);
 }

@@ -41,9 +41,9 @@ function chamberCell(chamber: string, plotLabel: string, name: string) {
   const hwTag = hw ? ` · ${hw}` : "";
   return (
     <span title={name}>
-      <span className="text-[#c8c8cb]">{chamber}</span>
-      {hwTag ? <span className="text-[#8a8a8d]">{hwTag}</span> : null}
-      <span className="text-[#8a8a8d]"> · </span>
+      <span className="text-muted">{chamber}</span>
+      {hwTag ? <span className="text-faint">{hwTag}</span> : null}
+      <span className="text-faint"> · </span>
       <span>{plotLabel || "—"}</span>
     </span>
   );
@@ -61,15 +61,15 @@ function AcrossRunsFooter({
   if (!stats) return null;
   return (
     <tfoot>
-      <tr className="border-t border-[#3a3b3f] bg-[#16171a] text-[#e8e8e8]">
+      <tr className="border-t border-border bg-panel-elevated text-foreground">
         <td className="px-2 py-2.5 font-semibold" colSpan={colSpan}>
           {label}
         </td>
-        <td className="px-2 py-2.5 font-mono tabular-nums font-semibold text-[#E8C547]">
+        <td className="px-2 py-2.5 font-mono tabular-nums font-semibold text-warning">
           {formatSigned(stats.meanDelta)}
         </td>
-        <td className="px-2 py-2.5 text-[#8a8a8d]">—</td>
-        <td className="px-2 py-2.5 text-[#8a8a8d]">—</td>
+        <td className="px-2 py-2.5 text-faint">—</td>
+        <td className="px-2 py-2.5 text-faint">—</td>
         <td className="px-2 py-2.5 font-mono tabular-nums">
           {formatSigned(stats.tStatistic, 3)}
         </td>
@@ -95,7 +95,7 @@ function PairRows({
   if (rows.length === 0) {
     return (
       <tr>
-        <td colSpan={11} className="px-2 py-6 text-center text-[#8a8a8d]">
+        <td colSpan={11} className="px-2 py-6 text-center text-faint">
           {emptyMessage}
         </td>
       </tr>
@@ -106,7 +106,7 @@ function PairRows({
       {rows.map((row) => (
         <tr
           key={`${row.dayKey}|${row.runKey}|${row.aId}|${row.bId}`}
-          className="border-b border-[#2a2b2e] text-[#e8e8e8]"
+          className="border-b border-border text-foreground"
         >
           <td className="px-2 py-2 whitespace-nowrap">{row.dayKey}</td>
           <td className="px-2 py-2 whitespace-nowrap">{row.runKey}</td>
@@ -157,15 +157,15 @@ function ComparisonTable({
   return (
     <div className="space-y-2">
       <div>
-        <h3 className="text-xs font-semibold text-white">{block.title}</h3>
-        <p className="mt-0.5 text-[11px] leading-relaxed text-[#8a8a8d]">
+        <h3 className="text-xs font-semibold text-foreground">{block.title}</h3>
+        <p className="mt-0.5 text-[11px] leading-relaxed text-faint">
           Δ = {block.deltaLabel}. {block.note}
         </p>
       </div>
       <div className="overflow-x-auto">
         <table className="w-full min-w-[720px] border-collapse text-left text-xs">
           <thead>
-                <tr className="border-b border-[#3a3b3f] text-[11px] uppercase tracking-wide text-[#8a8a8d]">
+                <tr className="border-b border-border text-[11px] uppercase tracking-wide text-faint">
                   <th className="px-2 py-2 font-medium">Day</th>
                   <th className="px-2 py-2 font-medium">Run</th>
                   <th className="px-2 py-2 font-medium">{aHeader}</th>
@@ -190,8 +190,8 @@ function ComparisonTable({
         </table>
       </div>
       {block.skipped.length > 0 ? (
-        <details className="text-[11px] text-[#8a8a8d]">
-          <summary className="cursor-pointer hover:text-[#c8c8cb]">
+        <details className="text-[11px] text-faint">
+          <summary className="cursor-pointer hover:text-muted">
             Skipped ({block.skipped.length})
           </summary>
           <ul className="mt-1 list-inside list-disc space-y-0.5">
@@ -210,34 +210,34 @@ function ComparisonTable({
 function WelchSummary({ test }: { test: TwoSampleTTest | null }) {
   if (!test) {
     return (
-      <p className="text-[11px] text-[#8a8a8d]">
+      <p className="text-[11px] text-faint">
         Need ≥2 runs at 45° and ≥2 at 90° to compare angle effect sizes.
       </p>
     );
   }
   return (
-    <div className="rounded border border-[#3a3b3f] bg-[#16171a] px-3 py-2 text-xs text-[#e8e8e8]">
-      <div className="font-semibold text-[#E8C547]">
+    <div className="rounded border border-border bg-panel-elevated px-3 py-2 text-xs text-foreground">
+      <div className="font-semibold text-warning">
         Welch test: mean(Light−Dark | 45°) − mean(Light−Dark | 90°)
       </div>
-      <div className="mt-1 grid gap-0.5 text-[#c8c8cb] sm:grid-cols-2">
+      <div className="mt-1 grid gap-0.5 text-muted sm:grid-cols-2">
         <div>
           Mean Δ @ 45°:{" "}
-          <span className="font-mono text-white">
+          <span className="font-mono text-foreground">
             {formatSigned(test.meanA)}
           </span>{" "}
           (n={test.nA} runs)
         </div>
         <div>
           Mean Δ @ 90°:{" "}
-          <span className="font-mono text-white">
+          <span className="font-mono text-foreground">
             {formatSigned(test.meanB)}
           </span>{" "}
           (n={test.nB} runs)
         </div>
         <div>
           Difference:{" "}
-          <span className="font-mono text-white">
+          <span className="font-mono text-foreground">
             {formatSigned(test.meanDiff)}
           </span>
         </div>
@@ -286,13 +286,13 @@ export function NormRateStatsTable() {
   }, [alignMode, load]);
 
   return (
-    <section className="rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
-      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-[#3a3b3f] px-4 py-3">
+    <section className="rounded-lg border border-border bg-panel">
+      <div className="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
         <div>
-          <h2 className="text-sm font-semibold text-white">
+          <h2 className="text-sm font-semibold text-foreground">
             Norm Rate stats — all runs (excl. X)
           </h2>
-          <p className="mt-1 max-w-3xl text-xs leading-relaxed text-[#8a8a8d]">
+          <p className="mt-1 max-w-3xl text-xs leading-relaxed text-faint">
             Aligned Norm Rate Δ on overlapping time, one-sample t vs 0. Also
             reports ∫A−∫B and Avg Δ (∫/Δt) = (∫A−∫B) / overlap minutes. Toggle
             changes the comparison x-origin. Origins save best-effort to disk
@@ -304,17 +304,17 @@ export function NormRateStatsTable() {
           type="button"
           onClick={() => load(alignMode)}
           disabled={loading}
-          className="rounded border border-[#3a3b3f] px-3 py-1.5 text-xs text-[#c8c8cb] hover:border-[#5a5b5f] hover:text-white disabled:opacity-50"
+          className="rounded border border-border px-3 py-1.5 text-xs text-muted hover:border-faint hover:text-foreground disabled:opacity-50"
         >
           {loading ? "Computing…" : "Refresh"}
         </button>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-b border-[#3a3b3f] px-4 py-2">
-        <span className="text-[11px] uppercase tracking-wide text-[#8a8a8d]">
+      <div className="flex flex-wrap items-center gap-2 border-b border-border px-4 py-2">
+        <span className="text-[11px] uppercase tracking-wide text-faint">
           Align by
         </span>
-        <div className="flex rounded border border-[#3a3b3f] p-0.5">
+        <div className="flex rounded border border-border p-0.5">
           {NORM_RATE_ALIGN_MODES.map((mode) => (
             <button
               key={mode}
@@ -330,8 +330,8 @@ export function NormRateStatsTable() {
               }
               className={`rounded px-3 py-1.5 text-xs disabled:opacity-50 ${
                 alignMode === mode
-                  ? "bg-[#2a2b2e] text-white"
-                  : "text-[#b5b5b8] hover:text-white"
+                  ? "bg-surface-hover text-foreground"
+                  : "text-muted hover:text-foreground"
               }`}
             >
               {ALIGN_TOGGLE_LABEL[mode]}
@@ -339,58 +339,58 @@ export function NormRateStatsTable() {
           ))}
         </div>
         {data ? (
-          <span className="text-[11px] text-[#8a8a8d]">
+          <span className="text-[11px] text-faint">
             Active:{" "}
-            <span className="text-[#E8C547]">{data.alignModeLabel}</span>
+            <span className="text-warning">{data.alignModeLabel}</span>
           </span>
         ) : null}
       </div>
 
       {error ? (
-        <p className="px-4 py-3 text-sm text-[#E2574C]">{error}</p>
+        <p className="px-4 py-3 text-sm text-coral">{error}</p>
       ) : null}
 
       {loading && !data ? (
-        <div className="flex items-center gap-2 px-4 py-8 text-sm text-[#8a8a8d]">
-          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-[#4C8FD1] border-t-transparent" />
+        <div className="flex items-center gap-2 px-4 py-8 text-sm text-faint">
+          <span className="inline-block h-4 w-4 animate-spin rounded-full border-2 border-steel border-t-transparent" />
           Loading all non-X trials and computing Norm Rate stats…
         </div>
       ) : null}
 
       {data ? (
         <div className={`space-y-8 px-4 py-4 ${loading ? "opacity-60" : ""}`}>
-          <div className="flex flex-wrap gap-3 text-[11px] text-[#8a8a8d]">
+          <div className="flex flex-wrap gap-3 text-[11px] text-faint">
             <span>
               Trials loaded:{" "}
-              <span className="text-[#c8c8cb]">{data.summary.trialCount}</span>
+              <span className="text-muted">{data.summary.trialCount}</span>
             </span>
             <span>
               Run groups:{" "}
-              <span className="text-[#c8c8cb]">{data.summary.runGroups}</span>
+              <span className="text-muted">{data.summary.runGroups}</span>
             </span>
             <span>
               Light−Dark pairs:{" "}
-              <span className="text-[#c8c8cb]">{data.summary.compared}</span>
+              <span className="text-muted">{data.summary.compared}</span>
             </span>
             <span>
               Excluded X:{" "}
-              <span className="text-[#c8c8cb]">{data.summary.excludedX}</span>
+              <span className="text-muted">{data.summary.excludedX}</span>
             </span>
             <span>
               Origins saved:{" "}
-              <span className="text-[#c8c8cb]">{data.origins.length}</span>
+              <span className="text-muted">{data.origins.length}</span>
             </span>
           </div>
 
-          <details className="text-xs text-[#8a8a8d]">
-            <summary className="cursor-pointer hover:text-[#c8c8cb]">
+          <details className="text-xs text-faint">
+            <summary className="cursor-pointer hover:text-muted">
               Saved start times (session / AH trough / recording) —{" "}
               {data.origins.length} trials
             </summary>
             <div className="mt-2 max-h-48 overflow-auto">
               <table className="w-full min-w-[640px] border-collapse text-left text-[11px]">
                 <thead>
-                  <tr className="border-b border-[#3a3b3f] text-[#8a8a8d]">
+                  <tr className="border-b border-border text-faint">
                     <th className="px-2 py-1 font-medium">File</th>
                     <th className="px-2 py-1 font-medium">Session</th>
                     <th className="px-2 py-1 font-medium">AH trough</th>
@@ -401,7 +401,7 @@ export function NormRateStatsTable() {
                   {data.origins.map((o) => (
                     <tr
                       key={o.trialId}
-                      className="border-b border-[#2a2b2e] text-[#c8c8cb]"
+                      className="border-b border-border text-muted"
                     >
                       <td className="px-2 py-1 whitespace-nowrap">
                         {o.filename.replace(/\.csv$/i, "")}
@@ -409,7 +409,7 @@ export function NormRateStatsTable() {
                       <td className="px-2 py-1 font-mono">
                         {o.sessionStartTime ?? "—"}
                       </td>
-                      <td className="px-2 py-1 font-mono text-[#E8C547]">
+                      <td className="px-2 py-1 font-mono text-warning">
                         {o.ahTroughTime ?? "—"}
                       </td>
                       <td className="px-2 py-1 font-mono">
@@ -429,8 +429,8 @@ export function NormRateStatsTable() {
             emptyMessage="No Light/Dark pairs found among non-X runs."
           />
 
-          <div className="space-y-6 border-t border-[#3a3b3f] pt-6">
-            <h3 className="text-sm font-semibold text-white">
+          <div className="space-y-6 border-t border-border pt-6">
+            <h3 className="text-sm font-semibold text-foreground">
               Hardware checks
             </h3>
             <ComparisonTable
@@ -453,8 +453,8 @@ export function NormRateStatsTable() {
             />
           </div>
 
-          <div className="space-y-6 border-t border-[#3a3b3f] pt-6">
-            <h3 className="text-sm font-semibold text-white">Angle checks</h3>
+          <div className="space-y-6 border-t border-border pt-6">
+            <h3 className="text-sm font-semibold text-foreground">Angle checks</h3>
             <ComparisonTable
               block={data.angle45Minus90}
               aHeader="Light 45° (+)"

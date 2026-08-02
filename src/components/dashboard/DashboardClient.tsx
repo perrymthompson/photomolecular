@@ -44,8 +44,8 @@ export function DashboardClient() {
   return (
     <div className="mx-auto max-w-3xl space-y-6 px-4 py-6">
       <div>
-        <h1 className="text-xl font-semibold text-white">Trial dashboard</h1>
-        <p className="mt-1 text-sm text-[#b5b5b8]">
+        <h1 className="text-xl font-semibold text-foreground">Trial dashboard</h1>
+        <p className="mt-1 text-sm text-muted">
           Upload CSVs, sync the data/csv folder, edit notes / session starts /
           time bookmarks — metadata is editable anytime online.
         </p>
@@ -67,7 +67,7 @@ export function DashboardClient() {
       <TrialMetadataCsvPanel />
 
       {loadError ? (
-        <p className="rounded border border-[#E2574C]/40 bg-[#E2574C]/10 px-3 py-2 text-sm text-[#E2574C]">
+        <p className="rounded border border-[color:var(--danger-border)] bg-[color:var(--danger-bg)] px-3 py-2 text-sm text-coral">
           {loadError}
         </p>
       ) : null}

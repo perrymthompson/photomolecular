@@ -10,7 +10,8 @@
 
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis } from "plotly.js";
-import { DARK_THEME } from "@/lib/colors";
+import { plotThemeFor } from "@/lib/colors";
+import { useTheme } from "@/components/theme/ThemeProvider";
 import {
   commonOverlapRange,
   fitPooledSeries,
@@ -136,6 +137,8 @@ export function AggregateSensorPlot({
   showDifference = false,
   showCumulativeDifference = false,
 }: Props) {
+  const { mode: colorMode } = useTheme();
+  const plotTheme = useMemo(() => plotThemeFor(colorMode), [colorMode]);
   const [PlotComponent, setPlotComponent] = useState<ComponentType<{
     data: Data[];
     layout: Partial<Layout>;
@@ -391,7 +394,7 @@ export function AggregateSensorPlot({
         x1: 0,
         y0: 0,
         y1: 1,
-        line: { color: DARK_THEME.subtext, width: 1, dash: "dot" },
+        line: { color: plotTheme.subtext, width: 1, dash: "dot" },
       });
     }
 
@@ -412,13 +415,13 @@ export function AggregateSensorPlot({
       yAxes[key] = {
         title: {
           text: titleText,
-          font: { size: 11, color: DARK_THEME.text },
+          font: { size: 11, color: plotTheme.text },
         },
         domain: [Math.max(0, bottom), top - 0.02],
-        gridcolor: DARK_THEME.gridMajor,
+        gridcolor: plotTheme.gridMajor,
         zeroline: true,
-        zerolinecolor: DARK_THEME.subtext,
-        tickfont: { color: DARK_THEME.subtext, size: 10 },
+        zerolinecolor: plotTheme.subtext,
+        tickfont: { color: plotTheme.subtext, size: 10 },
         automargin: true,
         autorange: false,
         range: paddedRange(metricValues[panel]),
@@ -438,6 +441,7 @@ export function AggregateSensorPlot({
     showCumulativeDifference,
     labelA,
     labelB,
+    plotTheme,
   ]);
 
   // Match portal body font for on-screen + PNG export (CSS vars like
@@ -450,19 +454,29 @@ export function AggregateSensorPlot({
     if (family) setPlotFontFamily(family);
   }, []);
 
+  const chartTitle = useMemo(() => {
+    const align =
+      mode === "aligned"
+        ? "session start"
+        : mode === "trough"
+          ? "AH trough"
+          : "clock time";
+    return `Aggregated · ${labelA} vs ${labelB} (${align})`;
+  }, [mode, labelA, labelB]);
+
   const layout = useMemo((): Partial<Layout> => {
     return {
       title: undefined,
-      paper_bgcolor: DARK_THEME.paper,
-      plot_bgcolor: DARK_THEME.bg,
-      font: { color: DARK_THEME.text, family: plotFontFamily, size: 12 },
+      paper_bgcolor: plotTheme.paper,
+      plot_bgcolor: plotTheme.bg,
+      font: { color: plotTheme.text, family: plotFontFamily, size: 12 },
       margin: { l: 64, r: 24, t: 40, b: 48 },
       height,
       showlegend: true,
       legend: {
         orientation: "h",
         y: 1.08,
-        font: { size: 11, color: DARK_THEME.subtext, family: plotFontFamily },
+        font: { size: 11, color: plotTheme.subtext, family: plotFontFamily },
       },
       xaxis: {
         title: {
@@ -471,14 +485,14 @@ export function AggregateSensorPlot({
             : "Time (UTC)",
           font: {
             size: 11,
-            color: DARK_THEME.subtext,
+            color: plotTheme.subtext,
             family: plotFontFamily,
           },
         },
         type: isElapsedPlotMode(mode) ? "linear" : "date",
-        gridcolor: DARK_THEME.gridMajor,
+        gridcolor: plotTheme.gridMajor,
         tickfont: {
-          color: DARK_THEME.subtext,
+          color: plotTheme.subtext,
           size: 10,
           family: plotFontFamily,
         },
@@ -489,11 +503,11 @@ export function AggregateSensorPlot({
       ...base.yAxes,
       shapes: base.shapes,
       hovermode: "closest",
-      uirevision: `agg-${mode}-${metrics.join("-")}`,
+      uirevision: `agg-${mode}-${metrics.join("-")}-${colorMode}`,
     };
-  }, [base.shapes, base.yAxes, height, metrics, mode, plotFontFamily]);
+  }, [base.shapes, base.yAxes, height, metrics, mode, plotFontFamily, plotTheme, colorMode]);
 
-  const mountKey = `${pointsKey}|${mode}|${metrics.join("-")}|${showSmooth}|${fitKind}|${fullResolution}|${showDifference}|${showCumulativeDifference}|${labelA}|${labelB}`;
+  const mountKey = `${pointsKey}|${mode}|${metrics.join("-")}|${showSmooth}|${fitKind}|${fullResolution}|${showDifference}|${showCumulativeDifference}|${labelA}|${labelB}|${colorMode}`;
 
   const showStatsBox =
     (showDifference || showCumulativeDifference) && base.diffStats.length > 0;
@@ -501,7 +515,7 @@ export function AggregateSensorPlot({
   if (!PlotComponent) {
     return (
       <div
-        className="flex items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-sm text-[#b5b5b8]"
+        className="flex items-center justify-center rounded-lg border border-border bg-panel text-sm text-muted"
         style={{ height }}
       >
         Loading plot…
@@ -510,10 +524,14 @@ export function AggregateSensorPlot({
   }
 
   return (
-    <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
+    <div className="space-y-2">
+      <h2 className="px-0.5 text-sm font-semibold leading-snug text-foreground">
+        {chartTitle}
+      </h2>
+      <div className="overflow-hidden rounded-lg border border-border bg-panel">
       {showStatsBox ? (
-        <div className="space-y-2 border-b border-[#3a3b3f] px-3 py-2.5">
-          <div className="text-[11px] font-medium uppercase tracking-wide text-[#8a8a8d]">
+        <div className="space-y-2 border-b border-border px-3 py-2.5">
+          <div className="text-[11px] font-medium uppercase tracking-wide text-faint">
             Aggregated difference stats ({labelA} − {labelB} ·{" "}
             {fitKind === "exp" ? "exp" : "LOESS"} fits · overlap only)
           </div>
@@ -523,24 +541,24 @@ export function AggregateSensorPlot({
               return (
                 <div
                   key={row.metric}
-                  className="min-w-[220px] flex-1 rounded border border-[#3a3b3f] bg-[#16171a] px-3 py-2 text-xs text-[#e8e8e8]"
+                  className="min-w-[220px] flex-1 rounded border border-border bg-panel-elevated px-3 py-2 text-xs text-foreground"
                 >
-                  <div className="mb-1 font-semibold text-[#E8C547]">
+                  <div className="mb-1 font-semibold text-warning">
                     {row.label} Δ
-                    <span className="ml-2 font-normal text-[#8a8a8d]">
+                    <span className="ml-2 font-normal text-faint">
                       n={n}
                     </span>
                   </div>
-                  <div className="grid gap-0.5 text-[#c8c8cb]">
+                  <div className="grid gap-0.5 text-muted">
                     <div>
                       Mean Δ{" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {formatSigned(meanDelta)} {row.unit}
                       </span>
                     </div>
                     <div>
                       ∫A−∫B{" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {row.integralDelta == null
                           ? "—"
                           : `${formatSigned(row.integralDelta)} ${row.integralUnit}`}
@@ -548,13 +566,13 @@ export function AggregateSensorPlot({
                     </div>
                     <div>
                       Avg Δ (∫/Δt){" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {row.meanFromIntegral == null
                           ? "—"
                           : `${formatSigned(row.meanFromIntegral)} ${row.unit}`}
                       </span>
                       {row.overlapMinutes != null ? (
-                        <span className="text-[#8a8a8d]">
+                        <span className="text-faint">
                           {" "}
                           · {row.overlapMinutes.toFixed(1)} min overlap
                         </span>
@@ -562,19 +580,19 @@ export function AggregateSensorPlot({
                     </div>
                     <div>
                       t=
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {formatSigned(tStatistic, 3)}
                       </span>
                       {" · p="}
-                      <span className="text-white">{formatPValue(pValue)}</span>
+                      <span className="text-foreground">{formatPValue(pValue)}</span>
                     </div>
                     <div>
                       95% CI [{" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {formatSigned(ci95[0])}
                       </span>
                       ,{" "}
-                      <span className="text-white">
+                      <span className="text-foreground">
                         {formatSigned(ci95[1])}
                       </span>{" "}
                       ]
@@ -604,6 +622,7 @@ export function AggregateSensorPlot({
         style={{ width: "100%", height }}
         useResizeHandler
       />
+      </div>
     </div>
   );
 }

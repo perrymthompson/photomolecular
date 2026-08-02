@@ -32,7 +32,8 @@
 
 import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis } from "plotly.js";
-import { DARK_THEME, trialColorMapById } from "@/lib/colors";
+import { plotThemeFor, trialColorMapById } from "@/lib/colors";
+import { useTheme } from "@/components/theme/ThemeProvider";
 import {
   ahRateSeries,
   detectAhTurnaround,
@@ -274,6 +275,16 @@ export function EvapRateVsVpdPlot({
   fullResolution = false,
   poolLightDark = false,
 }: Props) {
+  const { mode: colorMode } = useTheme();
+  const plotTheme = useMemo(() => plotThemeFor(colorMode), [colorMode]);
+  const [plotFontFamily, setPlotFontFamily] = useState(
+    "Source Sans 3, sans-serif",
+  );
+  useEffect(() => {
+    const family = getComputedStyle(document.body).fontFamily;
+    if (family) setPlotFontFamily(family);
+  }, []);
+
   const [PlotComponent, setPlotComponent] = useState<ComponentType<{
     data: Data[];
     layout: Partial<Layout>;
@@ -389,7 +400,7 @@ export function EvapRateVsVpdPlot({
     return { traces: tracesOut, xVals: allX, yVals: allY, skippedUnlabeled };
   }, [series, colors, fullResolution, poolLightDark]);
 
-  const layout = useMemo((): Partial<Layout> => {
+  const chartTitle = useMemo(() => {
     const dateLabels = uniqueDateLabels(series.map((s) => s.meta));
     const datePart =
       dateLabels.length === 0
@@ -400,59 +411,76 @@ export function EvapRateVsVpdPlot({
     const titleBase = poolLightDark
       ? "Evaporation Rate vs VPD — pooled Light vs Dark by chamber"
       : "Evaporation Rate vs Vapor Pressure Deficit";
+    return datePart ? `${titleBase} — ${datePart}` : titleBase;
+  }, [series, poolLightDark]);
+
+  const layout = useMemo((): Partial<Layout> => {
     const yAxis: Partial<LayoutAxis> = {
       title: {
         text: "AH Rate dAH/dt (g/m³/min)",
-        font: { size: 11, color: DARK_THEME.text },
+        font: { size: 11, color: plotTheme.text, family: plotFontFamily },
       },
-      gridcolor: DARK_THEME.gridMajor,
+      gridcolor: plotTheme.gridMajor,
       zeroline: true,
-      zerolinecolor: DARK_THEME.subtext,
-      tickfont: { color: DARK_THEME.subtext, size: 10 },
+      zerolinecolor: plotTheme.subtext,
+      tickfont: {
+        color: plotTheme.subtext,
+        size: 10,
+        family: plotFontFamily,
+      },
       automargin: true,
       autorange: false,
       range: percentileRange(yVals, 2, 98),
     };
 
     return {
-      title: {
-        text: datePart ? `${titleBase} — ${datePart}` : titleBase,
-        font: { color: "#ffffff", size: 15 },
-        x: 0.01,
-        xanchor: "left",
-      },
-      paper_bgcolor: DARK_THEME.bg,
-      plot_bgcolor: DARK_THEME.bg,
-      font: { color: DARK_THEME.text },
+      title: undefined,
+      paper_bgcolor: plotTheme.bg,
+      plot_bgcolor: plotTheme.bg,
+      font: { color: plotTheme.text, family: plotFontFamily },
       showlegend: true,
       legend: {
         title: { text: poolLightDark ? "Condition" : "Trial" },
-        bgcolor: DARK_THEME.bg,
-        font: { color: DARK_THEME.text },
+        bgcolor: plotTheme.bg,
+        font: { color: plotTheme.text, family: plotFontFamily },
       },
-      margin: { t: 56, r: 24, b: 56, l: 72 },
+      margin: { t: 40, r: 24, b: 56, l: 72 },
       hovermode: "closest",
-      uirevision: poolLightDark ? "evap-vs-vpd-pool" : "evap-vs-vpd",
+      uirevision: poolLightDark
+        ? `evap-vs-vpd-pool-${colorMode}`
+        : `evap-vs-vpd-${colorMode}`,
       xaxis: {
         title: {
           text: "Vapor Pressure Deficit (kPa)",
-          font: { color: DARK_THEME.text, size: 11 },
+          font: { color: plotTheme.text, size: 11, family: plotFontFamily },
         },
-        gridcolor: DARK_THEME.gridMajor,
+        gridcolor: plotTheme.gridMajor,
         zeroline: true,
-        zerolinecolor: DARK_THEME.subtext,
-        tickfont: { color: DARK_THEME.subtext, size: 10 },
+        zerolinecolor: plotTheme.subtext,
+        tickfont: {
+          color: plotTheme.subtext,
+          size: 10,
+          family: plotFontFamily,
+        },
         autorange: false,
         range: paddedAxisRange(xVals),
       },
       yaxis: yAxis,
       height,
     };
-  }, [series, xVals, yVals, height, poolLightDark]);
+  }, [
+    xVals,
+    yVals,
+    height,
+    poolLightDark,
+    plotTheme,
+    plotFontFamily,
+    colorMode,
+  ]);
 
   if (series.length === 0) {
     return (
-      <div className="flex h-80 items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
+      <div className="flex h-80 items-center justify-center rounded-lg border border-border bg-panel text-muted">
         Select one or more trials to plot.
       </div>
     );
@@ -460,23 +488,26 @@ export function EvapRateVsVpdPlot({
 
   if (!PlotComponent) {
     return (
-      <div className="flex h-80 items-center justify-center rounded-lg border border-[#3a3b3f] bg-[#1e1f22] text-[#b5b5b8]">
+      <div className="flex h-80 items-center justify-center rounded-lg border border-border bg-panel text-muted">
         Loading plot…
       </div>
     );
   }
 
-  const mountKey = `${series.map((s) => s.meta.id).join(",")}|ahRateVsVpd|${fullResolution}|${poolLightDark ? "pool" : "trial"}`;
+  const mountKey = `${series.map((s) => s.meta.id).join(",")}|ahRateVsVpd|${fullResolution}|${poolLightDark ? "pool" : "trial"}|${colorMode}`;
 
   return (
     <div className="space-y-2">
+      <h2 className="px-0.5 text-sm font-semibold leading-snug text-foreground">
+        {chartTitle}
+      </h2>
       {poolLightDark && skippedUnlabeled > 0 ? (
-        <p className="text-xs text-[#8a8a8d]">
+        <p className="text-xs text-faint">
           Skipped {skippedUnlabeled} selected trial
           {skippedUnlabeled === 1 ? "" : "s"} without a Light/Dark plot label.
         </p>
       ) : null}
-      <div className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]">
+      <div className="overflow-hidden rounded-lg border border-border bg-panel">
         <PlotComponent
           key={mountKey}
           data={traces}

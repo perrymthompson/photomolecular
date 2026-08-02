@@ -1,5 +1,8 @@
 import { channelNumber } from "./humidity";
 
+/** Site / plot color mode (display only). */
+export type ColorMode = "dark" | "light";
+
 /** Distinct colors for up to 30 trials (ggplot-inspired). */
 const PALETTE = [
   "#E2574C",
@@ -66,7 +69,18 @@ export function trialColorMap(labels: string[]): Record<string, string> {
   return map;
 }
 
-export const DARK_THEME = {
+/** Plotly paper/plot/axis colors (display only — no effect on series math). */
+export type PlotTheme = {
+  bg: string;
+  gridMajor: string;
+  gridMinor: string;
+  text: string;
+  subtext: string;
+  caption: string;
+  paper: string;
+};
+
+export const PLOT_THEME_DARK: PlotTheme = {
   bg: "#1e1f22",
   gridMajor: "#3a3b3f",
   gridMinor: "#2a2b2e",
@@ -74,4 +88,21 @@ export const DARK_THEME = {
   subtext: "#b5b5b8",
   caption: "#8a8a8d",
   paper: "#1e1f22",
-} as const;
+};
+
+export const PLOT_THEME_LIGHT: PlotTheme = {
+  bg: "#ffffff",
+  gridMajor: "#d8dbe0",
+  gridMinor: "#eceef1",
+  text: "#1a1b1e",
+  subtext: "#5c5f66",
+  caption: "#8a8a8d",
+  paper: "#ffffff",
+};
+
+export function plotThemeFor(mode: ColorMode): PlotTheme {
+  return mode === "light" ? PLOT_THEME_LIGHT : PLOT_THEME_DARK;
+}
+
+/** @deprecated use plotThemeFor(mode) — kept as dark default for older imports */
+export const DARK_THEME = PLOT_THEME_DARK;

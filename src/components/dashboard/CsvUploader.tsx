@@ -80,12 +80,12 @@ export function CsvUploader({ existingFilenames, onUploaded }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-dashed border-[#3a3b3f] bg-[#1e1f22] p-6 text-center">
-      <p className="mb-3 text-sm text-[#b5b5b8]">
+    <div className="rounded-lg border border-dashed border-border bg-panel p-6 text-center">
+      <p className="mb-3 text-sm text-muted">
         Upload chamber CSV files (same format as your R script). Duplicate filenames
         are rejected.
       </p>
-      <label className="inline-flex cursor-pointer items-center rounded bg-[#E2574C] px-4 py-2 text-sm font-medium text-white hover:brightness-110">
+      <label className="inline-flex cursor-pointer items-center rounded bg-coral px-4 py-2 text-sm font-medium text-foreground hover:brightness-110">
         {busy ? "Uploading…" : "Choose CSV files"}
         <input
           type="file"
@@ -102,7 +102,7 @@ export function CsvUploader({ existingFilenames, onUploaded }: Props) {
       {message ? (
         <p
           className={`mt-3 whitespace-pre-line text-left text-xs ${
-            messageOk ? "text-[#5CB85C]" : "text-[#E2574C]"
+            messageOk ? "text-emerald-500" : "text-coral"
           }`}
         >
           {message}

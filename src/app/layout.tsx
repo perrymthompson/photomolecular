@@ -1,5 +1,6 @@
 import type { Metadata } from "next";
 import { Nav } from "@/components/layout/Nav";
+import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { Source_Sans_3, IBM_Plex_Mono } from "next/font/google";
 import "./globals.css";
 
@@ -20,16 +21,39 @@ export const metadata: Metadata = {
     "Interactive absolute humidity, RH, and temperature plots from chamber sensor CSVs",
 };
 
+/** Avoid flash of wrong theme before React hydrates. */
+const themeInitScript = `
+(function(){
+  try {
+    var t = localStorage.getItem('site-color-mode');
+    if (t !== 'light' && t !== 'dark') t = 'dark';
+    document.documentElement.dataset.theme = t;
+    document.documentElement.style.colorScheme = t;
+  } catch (e) {
+    document.documentElement.dataset.theme = 'dark';
+  }
+})();
+`;
+
 export default function RootLayout({
   children,
 }: Readonly<{
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en" className={`${sans.variable} ${mono.variable} h-full`}>
-      <body className="min-h-full flex flex-col bg-[#121316] font-sans text-[#e8e8e8] antialiased">
-        <Nav />
-        <main className="flex-1">{children}</main>
+    <html
+      lang="en"
+      className={`${sans.variable} ${mono.variable} h-full`}
+      suppressHydrationWarning
+    >
+      <head>
+        <script dangerouslySetInnerHTML={{ __html: themeInitScript }} />
+      </head>
+      <body className="flex min-h-full flex-col bg-background font-sans text-foreground antialiased">
+        <ThemeProvider>
+          <Nav />
+          <main className="flex-1">{children}</main>
+        </ThemeProvider>
       </body>
     </html>
   );

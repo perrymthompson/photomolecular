@@ -41,7 +41,7 @@ type ActiveFilters = Partial<Record<TrialFilterKey, string[]>>;
 function Chevron({ open }: { open: boolean }) {
   return (
     <span
-      className={`inline-block text-[#8a8a8d] transition-transform ${open ? "rotate-90" : ""}`}
+      className={`inline-block text-faint transition-transform ${open ? "rotate-90" : ""}`}
     >
       ▶
     </span>
@@ -103,13 +103,13 @@ function FilterChipRow({
   return (
     <div className="space-y-1">
       <div className="flex items-center justify-between gap-2">
-        <span className="text-[10px] font-semibold uppercase tracking-wide text-[#8a8a8d]">
+        <span className="text-[10px] font-semibold uppercase tracking-wide text-faint">
           {def.title}
         </span>
         {selected.length > 0 ? (
           <button
             type="button"
-            className="text-[10px] text-[#8a8a8d] hover:text-white"
+            className="text-[10px] text-faint hover:text-foreground"
             onClick={() => onChange([])}
           >
             Clear
@@ -128,8 +128,8 @@ function FilterChipRow({
               onClick={() => toggle(value)}
               className={`max-w-full truncate rounded border px-1.5 py-0.5 text-[10px] ${
                 on
-                  ? "border-[#4C8FD1] bg-[#4C8FD1]/20 text-white"
-                  : "border-[#3a3b3f] text-[#b5b5b8] hover:border-[#5c5d61] hover:text-white"
+                  ? "border-steel bg-steel/20 text-foreground"
+                  : "border-border text-muted hover:border-faint hover:text-foreground"
               }`}
             >
               {label}
@@ -217,8 +217,8 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
 
   if (trials.length === 0) {
     return (
-      <p className="text-sm text-[#b5b5b8]">
-        No trials yet. Drop CSVs into <code className="text-[#e8e8e8]">data/csv/</code>{" "}
+      <p className="text-sm text-muted">
+        No trials yet. Drop CSVs into <code className="text-foreground">data/csv/</code>{" "}
         or upload them on the Dashboard.
       </p>
     );
@@ -229,7 +229,7 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
       <div className="flex shrink-0 flex-wrap gap-2">
         <button
           type="button"
-          className="rounded border border-[#3a3b3f] px-2 py-1 text-xs text-[#e8e8e8] hover:bg-[#2a2b2e]"
+          className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-surface-hover"
           onClick={() => onChange(filtered.map((t) => t.id))}
           title="Select all trials currently visible under filters"
         >
@@ -237,7 +237,7 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
         </button>
         <button
           type="button"
-          className="rounded border border-[#3a3b3f] px-2 py-1 text-xs text-[#e8e8e8] hover:bg-[#2a2b2e]"
+          className="rounded border border-border px-2 py-1 text-xs text-foreground hover:bg-surface-hover"
           onClick={() => onChange([])}
         >
           Clear
@@ -246,8 +246,8 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
           type="button"
           className={`rounded border px-2 py-1 text-xs ${
             filtersOpen || activeFilterCount > 0
-              ? "border-[#4C8FD1] text-[#4C8FD1]"
-              : "border-[#3a3b3f] text-[#e8e8e8] hover:bg-[#2a2b2e]"
+              ? "border-steel text-steel"
+              : "border-border text-foreground hover:bg-surface-hover"
           }`}
           onClick={() => setFiltersOpen((o) => !o)}
         >
@@ -256,7 +256,7 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
       </div>
 
       {filtersOpen ? (
-        <div className="shrink-0 space-y-2 rounded border border-[#3a3b3f] bg-[#1e1f22] p-2">
+        <div className="shrink-0 space-y-2 rounded border border-border bg-panel p-2">
           {TRIAL_FILTERS.map((def) => (
             <FilterChipRow
               key={def.key}
@@ -269,13 +269,13 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
           {activeFilterCount > 0 ? (
             <button
               type="button"
-              className="text-[10px] text-[#8a8a8d] hover:text-white"
+              className="text-[10px] text-faint hover:text-foreground"
               onClick={clearFilters}
             >
               Clear all filters
             </button>
           ) : null}
-          <p className="text-[10px] text-[#6d6d70]">
+          <p className="text-[10px] text-faint">
             Showing {filtered.length} of {sorted.length}
           </p>
         </div>
@@ -283,7 +283,7 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
 
       <div className="scrollbar-themed min-h-0 flex-1 space-y-2 overflow-y-auto pr-1">
         {grouped.length === 0 ? (
-          <p className="px-1 text-xs text-[#8a8a8d]">
+          <p className="px-1 text-xs text-faint">
             No trials match the current filters.
           </p>
         ) : null}
@@ -296,22 +296,22 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
           return (
             <div
               key={day}
-              className="overflow-hidden rounded-lg border border-[#3a3b3f] bg-[#1e1f22]"
+              className="overflow-hidden rounded-lg border border-border bg-panel"
             >
               <button
                 type="button"
                 onClick={() => toggleDay(day)}
-                className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-[#25262a]"
+                className="flex w-full items-center gap-2 px-2.5 py-2 text-left hover:bg-surface"
               >
                 <Chevron open={dayOpen} />
-                <span className="flex-1 text-sm font-medium text-white">{day}</span>
-                <span className="text-[10px] text-[#8a8a8d]">
+                <span className="flex-1 text-sm font-medium text-foreground">{day}</span>
+                <span className="text-[10px] text-faint">
                   {runs.length} run{runs.length === 1 ? "" : "s"} · {trialCount}
                 </span>
               </button>
 
               {dayOpen ? (
-                <div className="border-t border-[#3a3b3f] px-1.5 pb-2 pt-1">
+                <div className="border-t border-border px-1.5 pb-2 pt-1">
                   {runs.map(({ run, items }) => {
                     const runKey = `${day}::${run}`;
                     const runOpen = openRuns.has(runKey);
@@ -320,15 +320,15 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
 
                     return (
                       <div key={runKey} className="mt-1">
-                        <div className="flex items-center gap-1 rounded px-1.5 py-1 hover:bg-[#25262a]">
+                        <div className="flex items-center gap-1 rounded px-1.5 py-1 hover:bg-surface">
                           <button
                             type="button"
                             onClick={() => toggleRunOpen(runKey)}
                             className="flex min-w-0 flex-1 items-center gap-2 text-left"
                           >
                             <Chevron open={runOpen} />
-                            <span className="text-sm text-[#e8e8e8]">{run}</span>
-                            <span className="text-[10px] text-[#8a8a8d]">
+                            <span className="text-sm text-foreground">{run}</span>
+                            <span className="text-[10px] text-faint">
                               {items.length}
                             </span>
                           </button>
@@ -350,13 +350,13 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
                         </div>
 
                         {runOpen ? (
-                          <ul className="ml-3 space-y-0.5 border-l border-[#3a3b3f] pl-2">
+                          <ul className="ml-3 space-y-0.5 border-l border-border pl-2">
                             {items.map((t) => {
                               const checked = selectedIds.includes(t.id);
                               const plotLabel = t.plotLabel?.trim();
                               return (
                                 <li key={t.id}>
-                                  <label className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 hover:bg-[#25262a]">
+                                  <label className="flex cursor-pointer items-start gap-2 rounded px-1.5 py-1 hover:bg-surface">
                                     <input
                                       type="checkbox"
                                       className="mt-0.5 shrink-0"
@@ -364,16 +364,16 @@ export function TrialSelector({ trials, selectedIds, onChange }: Props) {
                                       onChange={() => toggleTrial(t.id)}
                                     />
                                     <span className="min-w-0">
-                                      <span className="block truncate text-sm text-[#e8e8e8]">
+                                      <span className="block truncate text-sm text-foreground">
                                         <span className="font-medium">{t.label}</span>
                                         {plotLabel ? (
-                                          <span className="text-[#b5b5b8]">
+                                          <span className="text-muted">
                                             {" "}
                                             · {plotLabel}
                                           </span>
                                         ) : null}
                                       </span>
-                                      <span className="block truncate text-[10px] text-[#8a8a8d]">
+                                      <span className="block truncate text-[10px] text-faint">
                                         {t.filename}
                                       </span>
                                     </span>

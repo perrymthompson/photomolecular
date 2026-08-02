@@ -119,26 +119,26 @@ export function PlotTrialNotes({ series, onSaved }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-[#3a3b3f] bg-[#16171a]">
+    <div className="rounded-lg border border-border bg-panel-elevated">
       <button
         type="button"
         onClick={() => setModuleOpen((open) => !open)}
-        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-[#1e1f22]"
+        className="flex w-full items-center justify-between gap-3 px-4 py-3 text-left hover:bg-panel"
       >
         <div>
-          <h3 className="text-sm font-medium text-white">Trial notes</h3>
-          <p className="mt-0.5 text-xs text-[#8a8a8d]">
+          <h3 className="text-sm font-medium text-foreground">Trial notes</h3>
+          <p className="mt-0.5 text-xs text-faint">
             {series.length} plotted trial{series.length === 1 ? "" : "s"}
             {withNotes > 0 ? ` · ${withNotes} with notes` : ""}
           </p>
         </div>
-        <span className="shrink-0 text-xs text-[#b5b5b8]">
+        <span className="shrink-0 text-xs text-muted">
           {moduleOpen ? "Collapse ▲" : "Expand ▼"}
         </span>
       </button>
 
       {moduleOpen ? (
-        <div className="scrollbar-themed max-h-[min(50vh,520px)] space-y-2 overflow-y-auto border-t border-[#3a3b3f] px-4 py-3">
+        <div className="scrollbar-themed max-h-[min(50vh,520px)] space-y-2 overflow-y-auto border-t border-border px-4 py-3">
           {series.map((s) => {
             const draft = drafts[s.meta.id] ?? {
               notes: s.meta.notes ?? "",
@@ -152,35 +152,35 @@ export function PlotTrialNotes({ series, onSaved }: Props) {
             return (
               <div
                 key={s.meta.id}
-                className="rounded border border-[#3a3b3f] bg-[#1e1f22]"
+                className="rounded border border-border bg-panel"
               >
                 <button
                   type="button"
                   onClick={() =>
                     setExpandedId((id) => (id === s.meta.id ? null : s.meta.id))
                   }
-                  className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left hover:bg-[#25262a]"
+                  className="flex w-full items-start justify-between gap-3 px-3 py-2 text-left hover:bg-surface"
                 >
                   <div className="min-w-0">
-                    <p className="truncate text-sm font-medium text-[#e8e8e8]">
+                    <p className="truncate text-sm font-medium text-foreground">
                       {trialTitle(s.meta)}
                     </p>
                     {!expanded ? (
-                      <p className="mt-0.5 truncate text-xs text-[#8a8a8d]">
+                      <p className="mt-0.5 truncate text-xs text-faint">
                         {previewText(draft.notes)}
                       </p>
                     ) : null}
                   </div>
-                  <span className="shrink-0 text-[10px] text-[#8a8a8d]">
+                  <span className="shrink-0 text-[10px] text-faint">
                     {expanded ? "▲" : "▼"}
                   </span>
                 </button>
 
                 {expanded ? (
-                  <div className="space-y-2 border-t border-[#3a3b3f] px-3 py-3">
+                  <div className="space-y-2 border-t border-border px-3 py-3">
                     <textarea
                       rows={6}
-                      className="scrollbar-themed w-full resize-y rounded border border-[#3a3b3f] bg-[#16171a] px-2 py-1.5 text-sm text-[#e8e8e8]"
+                      className="scrollbar-themed w-full resize-y rounded border border-border bg-panel-elevated px-2 py-1.5 text-sm text-foreground"
                       value={draft.notes}
                       onChange={(e) => setDraftNotes(s.meta.id, e.target.value)}
                       placeholder="Long-form notes for this CSV…"
@@ -190,13 +190,13 @@ export function PlotTrialNotes({ series, onSaved }: Props) {
                         type="button"
                         disabled={draft.saving || !draft.dirty}
                         onClick={() => void save(s.meta)}
-                        className="rounded bg-[#4C8FD1] px-3 py-1.5 text-xs font-medium text-white hover:brightness-110 disabled:opacity-50"
+                        className="rounded bg-steel px-3 py-1.5 text-xs font-medium text-foreground hover:brightness-110 disabled:opacity-50"
                       >
                         {draft.saving ? "Saving…" : "Save notes"}
                       </button>
                       {draft.status ? (
                         <span
-                          className={`text-xs ${draft.statusOk ? "text-[#5CB85C]" : "text-[#E2574C]"}`}
+                          className={`text-xs ${draft.statusOk ? "text-emerald-500" : "text-coral"}`}
                         >
                           {draft.status}
                         </span>

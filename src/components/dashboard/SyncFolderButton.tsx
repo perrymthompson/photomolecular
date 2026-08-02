@@ -72,19 +72,19 @@ export function SyncFolderButton({ onSynced }: Props) {
   };
 
   return (
-    <div className="rounded-lg border border-[#3a3b3f] bg-[#1e1f22] p-4">
+    <div className="rounded-lg border border-border bg-panel p-4">
       <div className="flex flex-wrap items-center justify-between gap-3">
         <div>
-          <h2 className="text-sm font-medium text-white">Sync folder CSVs</h2>
-          <p className="mt-1 text-xs text-[#8a8a8d]">
-            Scan <code className="text-[#b5b5b8]">data/csv/</code>.{" "}
-            <strong className="font-normal text-[#b5b5b8]">Run sync</strong>{" "}
+          <h2 className="text-sm font-medium text-foreground">Sync folder CSVs</h2>
+          <p className="mt-1 text-xs text-faint">
+            Scan <code className="text-muted">data/csv/</code>.{" "}
+            <strong className="font-normal text-muted">Run sync</strong>{" "}
             registers new files.{" "}
-            <strong className="font-normal text-[#b5b5b8]">Refresh data</strong>{" "}
+            <strong className="font-normal text-muted">Refresh data</strong>{" "}
             re-uploads changed CSVs and keeps notes / bookmarks / session
             starts.{" "}
-            <strong className="font-normal text-[#b5b5b8]">Run DataImport</strong>{" "}
-            applies <code className="text-[#b5b5b8]">data/import/trial-metadata.csv</code>{" "}
+            <strong className="font-normal text-muted">Run DataImport</strong>{" "}
+            applies <code className="text-muted">data/import/trial-metadata.csv</code>{" "}
             to matching trials.
           </p>
         </div>
@@ -93,7 +93,7 @@ export function SyncFolderButton({ onSynced }: Props) {
             type="button"
             disabled={busy}
             onClick={() => void run(false)}
-            className="rounded bg-[#4C8FD1] px-4 py-2 text-sm font-medium text-white hover:brightness-110 disabled:opacity-50"
+            className="rounded bg-steel px-4 py-2 text-sm font-medium text-foreground hover:brightness-110 disabled:opacity-50"
           >
             {busy ? "Working…" : "Run sync"}
           </button>
@@ -102,7 +102,7 @@ export function SyncFolderButton({ onSynced }: Props) {
             disabled={busy}
             onClick={() => void run(true)}
             title="Overwrite Supabase CSV data for files already registered (metadata preserved)"
-            className="rounded border border-[#4C8FD1] px-4 py-2 text-sm font-medium text-[#4C8FD1] hover:bg-[#4C8FD1]/10 disabled:opacity-50"
+            className="rounded border border-steel px-4 py-2 text-sm font-medium text-steel hover:bg-steel/10 disabled:opacity-50"
           >
             {busy ? "Working…" : "Refresh data"}
           </button>
@@ -111,7 +111,7 @@ export function SyncFolderButton({ onSynced }: Props) {
             disabled={busy}
             onClick={() => void runDataImport()}
             title="Apply plot labels, notes, and session starts from data/import/trial-metadata.csv"
-            className="rounded border border-[#3a3b3f] px-4 py-2 text-sm font-medium text-[#e8e8e8] hover:bg-[#2a2b2e] disabled:opacity-50"
+            className="rounded border border-border px-4 py-2 text-sm font-medium text-foreground hover:bg-surface-hover disabled:opacity-50"
           >
             {busy ? "Working…" : "Run DataImport"}
           </button>
@@ -120,7 +120,7 @@ export function SyncFolderButton({ onSynced }: Props) {
       {message ? (
         <p
           className={`mt-3 whitespace-pre-line text-xs ${
-            ok ? "text-[#5CB85C]" : "text-[#E2574C]"
+            ok ? "text-emerald-500" : "text-coral"
           }`}
         >
           {message}
