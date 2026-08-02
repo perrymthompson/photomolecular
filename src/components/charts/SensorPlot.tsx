@@ -1356,7 +1356,7 @@ export function SensorPlot({
         bgcolor: plotTheme.bg,
         font: { color: plotTheme.text, family: plotFontFamily },
       },
-      margin: { t: 40, r: 24, b: 56, l: 72 },
+      margin: { t: 48, r: 48, b: 56, l: 72 },
       hovermode: "x unified",
       hoverdistance: 20,
       uirevision: `sensor-plot-${colorMode}`,

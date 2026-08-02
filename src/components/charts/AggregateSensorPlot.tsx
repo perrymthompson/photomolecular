@@ -227,7 +227,8 @@ export function AggregateSensorPlot({
           mode: "markers",
           name: showSmooth ? `${name} · points` : name,
           legendgroup: name,
-          showlegend: true,
+          // Fit-on: only the fit curve gets a legend slot (avoids a very wide legend).
+          showlegend: !showSmooth,
           x: xPlot,
           y: sc.y,
           text,
@@ -470,12 +471,19 @@ export function AggregateSensorPlot({
       paper_bgcolor: plotTheme.paper,
       plot_bgcolor: plotTheme.bg,
       font: { color: plotTheme.text, family: plotFontFamily, size: 12 },
-      margin: { l: 64, r: 24, t: 40, b: 48 },
+      margin: { l: 64, r: 48, t: 72, b: 48 },
       height,
       showlegend: true,
       legend: {
         orientation: "h",
-        y: 1.08,
+        x: 0,
+        xanchor: "left",
+        y: 1.02,
+        yanchor: "bottom",
+        bgcolor: "rgba(0,0,0,0)",
+        borderwidth: 0,
+        // Keep entries inside the paper so PNG export does not clip the right edge.
+        tracegroupgap: 8,
         font: { size: 11, color: plotTheme.subtext, family: plotFontFamily },
       },
       xaxis: {
