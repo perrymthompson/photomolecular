@@ -380,20 +380,16 @@ function buildRawTraceSeries(
   return { x, y, text, customdata };
 }
 
-/** Legend / hover label: channel · filename · optional plot label. */
+/** Legend / hover label: channel · condition (or filename if no plot label). */
 function legendName(s: TrialSeries): string {
-  const dup = s.meta.label;
-  const short = s.meta.filename.replace(/\.csv$/i, "");
   const plotLabel = s.meta.plotLabel?.trim();
-  return plotLabel
-    ? `${dup} · ${short} · ${plotLabel}`
-    : `${dup} · ${short}`;
+  if (plotLabel) return `${s.meta.label} · ${plotLabel}`;
+  return `${s.meta.label} · ${s.meta.filename.replace(/\.csv$/i, "")}`;
 }
 
-/** Short label for Diff / Cum Δ legend (channel · condition — no filename). */
+/** Short label for Diff / Cum Δ legend (same as trial legend when plot label set). */
 function diffLegendName(s: TrialSeries): string {
-  const plotLabel = s.meta.plotLabel?.trim();
-  return plotLabel ? `${s.meta.label} · ${plotLabel}` : s.meta.label;
+  return legendName(s);
 }
 
 /**
@@ -1361,10 +1357,20 @@ export function SensorPlot({
       showlegend: true,
       legend: {
         title: { text: "Trial" },
-        bgcolor: plotTheme.bg,
-        font: { color: plotTheme.text, family: plotFontFamily },
+        orientation: "h",
+        x: 0,
+        xanchor: "left",
+        y: 1.02,
+        yanchor: "bottom",
+        bgcolor: "rgba(0,0,0,0)",
+        borderwidth: 0,
+        // Keep the full legend inside the paper so PNG export does not clip it.
+        entrywidth: 0.42,
+        entrywidthmode: "fraction",
+        tracegroupgap: 8,
+        font: { color: plotTheme.text, family: plotFontFamily, size: 11 },
       },
-      margin: { t: 48, r: 48, b: 56, l: 72 },
+      margin: { t: 96, r: 40, b: 56, l: 72 },
       hovermode: "x unified",
       hoverdistance: 20,
       uirevision: `sensor-plot-${colorMode}`,
