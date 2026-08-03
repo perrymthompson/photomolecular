@@ -54,6 +54,12 @@ import type {
 import { plotThemeFor, trialColorMapById } from "@/lib/colors";
 import { useTheme } from "@/components/theme/ThemeProvider";
 import {
+  plotlyLegend,
+  plotlyMargins,
+  plotXAxisTitle,
+} from "@/lib/plot-layout";
+import { usePrefersNarrow } from "@/lib/use-media-query";
+import {
   ahRateSeries,
   type AhRateOptions,
   detectAhTurnaround,
@@ -615,6 +621,7 @@ export function SensorPlot({
   onTimePick,
 }: Props) {
   const { mode: colorMode } = useTheme();
+  const isNarrow = usePrefersNarrow();
   const plotTheme = useMemo(() => plotThemeFor(colorMode), [colorMode]);
   const [plotFontFamily, setPlotFontFamily] = useState(
     "Source Sans 3, sans-serif",
@@ -623,6 +630,11 @@ export function SensorPlot({
     const family = getComputedStyle(document.body).fontFamily;
     if (family) setPlotFontFamily(family);
   }, []);
+
+  const legendEntryCount =
+    series.length +
+    (showDifference && series.length === 2 ? 1 : 0) +
+    (showCumulativeDifference && series.length === 2 ? 1 : 0);
 
   // Lazy-load Plotly only when we have data (keeps initial bundle smaller).
   const [PlotComponent, setPlotComponent] = useState<ComponentType<{
@@ -1354,45 +1366,36 @@ export function SensorPlot({
       annotations: [],
       paper_bgcolor: plotTheme.bg,
       plot_bgcolor: plotTheme.bg,
-      font: { color: plotTheme.text, family: plotFontFamily },
+      font: {
+        color: plotTheme.text,
+        family: plotFontFamily,
+        size: isNarrow ? 10 : 12,
+      },
       showlegend: true,
-      // Cast: Plotly 3 supports entrywidth* at runtime; @types/plotly.js omits them.
-      legend: {
-        title: { text: "Trial" },
-        orientation: "h",
-        x: 0,
-        xanchor: "left",
-        y: 1.02,
-        yanchor: "bottom",
-        xref: "paper",
-        yref: "paper",
-        bgcolor: "rgba(0,0,0,0)",
-        borderwidth: 0,
-        // Wrap entries within the paper so PNG export never clips legend text.
-        entrywidth: 0.3,
-        entrywidthmode: "fraction",
-        tracegroupgap: 8,
-        font: { color: plotTheme.text, family: plotFontFamily, size: 11 },
-      } as Partial<Layout>["legend"],
-      margin: { t: 110, r: 40, b: 56, l: 72 },
+      legend: plotlyLegend({
+        title: "Trial",
+        fontFamily: plotFontFamily,
+        fontColor: plotTheme.text,
+        isNarrow,
+      }),
+      margin: plotlyMargins(isNarrow, legendEntryCount),
       hovermode: "x unified",
       hoverdistance: 20,
-      uirevision: `sensor-plot-${colorMode}`,
+      uirevision: `sensor-plot-${colorMode}-${isNarrow ? "n" : "w"}`,
       shapes: [...base.shapes, ...bookmarkLayer.shapes],
       xaxis: {
         title: {
-          text:
-            mode === "aligned"
-              ? "Elapsed Time Since Session Start (minutes)"
-              : mode === "trough"
-                ? "Elapsed Time Since AH Trough (minutes)"
-                : "Time",
-          font: { color: plotTheme.text, size: 11, family: plotFontFamily },
+          text: plotXAxisTitle(mode, isNarrow),
+          font: {
+            color: plotTheme.text,
+            size: isNarrow ? 10 : 11,
+            family: plotFontFamily,
+          },
         },
         gridcolor: plotTheme.gridMajor,
         tickfont: {
           color: plotTheme.subtext,
-          size: 10,
+          size: isNarrow ? 9 : 10,
           family: plotFontFamily,
         },
         showspikes: true,
@@ -1410,7 +1413,7 @@ export function SensorPlot({
     };
     return layoutObj;
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [base, bookmarkLayer, mode, metrics, height, plotLabelsKey, pointsKey, plotTheme, plotFontFamily, colorMode]);
+  }, [base, bookmarkLayer, mode, metrics, height, plotLabelsKey, pointsKey, plotTheme, plotFontFamily, colorMode, isNarrow, legendEntryCount]);
 
   const data = useMemo(
     () => [...base.traces, ...bookmarkLayer.traces],
@@ -1484,7 +1487,7 @@ export function SensorPlot({
   }
 
   // Remount only when the set of trials / view mode changes — not on bookmark edits.
-  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}|${showDifference ? "diff" : "nodiff"}|${showCumulativeDifference ? "cum" : "nocum"}|${colorMode}`;
+  const mountKey = `${series.map((s) => s.meta.id).join(",")}|${mode}|${metrics.join("-")}|${showSmooth}|${fullResolution}|${showDifference ? "diff" : "nodiff"}|${showCumulativeDifference ? "cum" : "nocum"}|${colorMode}|${isNarrow ? "n" : "w"}`;
 
   const showStatsBox =
     (showDifference || showCumulativeDifference) &&
@@ -1493,7 +1496,7 @@ export function SensorPlot({
 
   return (
     <div className="space-y-2">
-      <h2 className="px-0.5 text-sm font-semibold leading-snug text-foreground">
+      <h2 className="break-words px-0.5 text-sm font-semibold leading-snug text-foreground">
         {chartTitle}
       </h2>
       <div className="overflow-hidden rounded-lg border border-border bg-panel">
@@ -1508,7 +1511,7 @@ export function SensorPlot({
               return (
                 <div
                   key={row.metric}
-                  className="min-w-[220px] flex-1 rounded border border-border bg-panel-elevated px-3 py-2 text-xs text-foreground"
+                  className="min-w-0 flex-1 basis-[min(100%,220px)] rounded border border-border bg-panel-elevated px-3 py-2 text-xs text-foreground"
                 >
                   <div className="mb-1 font-semibold text-warning">
                     {row.label} Δ

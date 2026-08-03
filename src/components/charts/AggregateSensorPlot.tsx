@@ -12,6 +12,8 @@ import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis } from "plotly.js";
 import { plotThemeFor } from "@/lib/colors";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import { plotlyLegend, plotlyMargins, plotXAxisTitle } from "@/lib/plot-layout";
+import { usePrefersNarrow } from "@/lib/use-media-query";
 import {
   commonOverlapRange,
   fitPooledSeries,
@@ -138,7 +140,20 @@ export function AggregateSensorPlot({
   showCumulativeDifference = false,
 }: Props) {
   const { mode: colorMode } = useTheme();
+  const isNarrow = usePrefersNarrow();
   const plotTheme = useMemo(() => plotThemeFor(colorMode), [colorMode]);
+  const [plotFontFamily, setPlotFontFamily] = useState(
+    "Source Sans 3, sans-serif",
+  );
+  useEffect(() => {
+    const family = getComputedStyle(document.body).fontFamily;
+    if (family) setPlotFontFamily(family);
+  }, []);
+  const legendEntryCount =
+    (seriesA.length > 0 ? 1 : 0) +
+    (seriesB.length > 0 ? 1 : 0) +
+    (showDifference ? 1 : 0) +
+    (showCumulativeDifference ? 1 : 0);
   const [PlotComponent, setPlotComponent] = useState<ComponentType<{
     data: Data[];
     layout: Partial<Layout>;
@@ -447,13 +462,6 @@ export function AggregateSensorPlot({
 
   // Match portal body font for on-screen + PNG export (CSS vars like
   // var(--font-sans) do not resolve in Plotly's static image export).
-  const [plotFontFamily, setPlotFontFamily] = useState(
-    "Source Sans 3, sans-serif",
-  );
-  useEffect(() => {
-    const family = getComputedStyle(document.body).fontFamily;
-    if (family) setPlotFontFamily(family);
-  }, []);
 
   const chartTitle = useMemo(() => {
     const align =
@@ -470,29 +478,26 @@ export function AggregateSensorPlot({
       title: undefined,
       paper_bgcolor: plotTheme.paper,
       plot_bgcolor: plotTheme.bg,
-      font: { color: plotTheme.text, family: plotFontFamily, size: 12 },
-      margin: { l: 64, r: 48, t: 72, b: 48 },
+      font: {
+        color: plotTheme.text,
+        family: plotFontFamily,
+        size: isNarrow ? 10 : 12,
+      },
+      margin: plotlyMargins(isNarrow, legendEntryCount),
       height,
       showlegend: true,
-      legend: {
-        orientation: "h",
-        x: 0,
-        xanchor: "left",
-        y: 1.02,
-        yanchor: "bottom",
-        bgcolor: "rgba(0,0,0,0)",
-        borderwidth: 0,
-        // Keep entries inside the paper so PNG export does not clip the right edge.
-        tracegroupgap: 8,
-        font: { size: 11, color: plotTheme.subtext, family: plotFontFamily },
-      },
+      legend: plotlyLegend({
+        fontFamily: plotFontFamily,
+        fontColor: plotTheme.subtext,
+        isNarrow,
+      }),
       xaxis: {
         title: {
           text: isElapsedPlotMode(mode)
-            ? "Elapsed time (min)"
-            : "Time (UTC)",
+            ? plotXAxisTitle(mode === "trough" ? "trough" : "aligned", isNarrow)
+            : plotXAxisTitle("calendar", isNarrow),
           font: {
-            size: 11,
+            size: isNarrow ? 10 : 11,
             color: plotTheme.subtext,
             family: plotFontFamily,
           },
@@ -501,7 +506,7 @@ export function AggregateSensorPlot({
         gridcolor: plotTheme.gridMajor,
         tickfont: {
           color: plotTheme.subtext,
-          size: 10,
+          size: isNarrow ? 9 : 10,
           family: plotFontFamily,
         },
         ...(isElapsedPlotMode(mode)
@@ -511,11 +516,22 @@ export function AggregateSensorPlot({
       ...base.yAxes,
       shapes: base.shapes,
       hovermode: "closest",
-      uirevision: `agg-${mode}-${metrics.join("-")}-${colorMode}`,
+      uirevision: `agg-${mode}-${metrics.join("-")}-${colorMode}-${isNarrow ? "n" : "w"}`,
     };
-  }, [base.shapes, base.yAxes, height, metrics, mode, plotFontFamily, plotTheme, colorMode]);
+  }, [
+    base.shapes,
+    base.yAxes,
+    height,
+    metrics,
+    mode,
+    plotFontFamily,
+    plotTheme,
+    colorMode,
+    isNarrow,
+    legendEntryCount,
+  ]);
 
-  const mountKey = `${pointsKey}|${mode}|${metrics.join("-")}|${showSmooth}|${fitKind}|${fullResolution}|${showDifference}|${showCumulativeDifference}|${labelA}|${labelB}|${colorMode}`;
+  const mountKey = `${pointsKey}|${mode}|${metrics.join("-")}|${showSmooth}|${fitKind}|${fullResolution}|${showDifference}|${showCumulativeDifference}|${labelA}|${labelB}|${colorMode}|${isNarrow ? "n" : "w"}`;
 
   const showStatsBox =
     (showDifference || showCumulativeDifference) && base.diffStats.length > 0;
@@ -549,7 +565,7 @@ export function AggregateSensorPlot({
               return (
                 <div
                   key={row.metric}
-                  className="min-w-[220px] flex-1 rounded border border-border bg-panel-elevated px-3 py-2 text-xs text-foreground"
+                  className="min-w-0 flex-1 basis-[min(100%,220px)] rounded border border-border bg-panel-elevated px-3 py-2 text-xs text-foreground"
                 >
                   <div className="mb-1 font-semibold text-warning">
                     {row.label} Δ

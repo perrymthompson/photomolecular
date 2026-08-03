@@ -18,6 +18,7 @@ import { NormRateStatsTable } from "@/components/charts/NormRateStatsTable";
 import { PlotTrialNotes } from "@/components/charts/PlotTrialNotes";
 import { TrialSelector } from "@/components/charts/TrialSelector";
 import { selectionSpansMultipleRuns, sortTrials } from "@/lib/trial-sort";
+import { usePrefersNarrow } from "@/lib/use-media-query";
 import type { MetricKey, PlotMode, TrialMeta, TrialSeries } from "@/types/trial";
 import { isElapsedPlotMode } from "@/types/trial";
 import { detectAhTurnaround } from "@/lib/derived-metrics";
@@ -108,6 +109,7 @@ function resolutionToggleTitle(fullResolution: boolean): string {
 }
 
 export function PlotWorkspace() {
+  const isNarrow = usePrefersNarrow();
   const [trials, setTrials] = useState<TrialMeta[]>([]);
   const [selectedIds, setSelectedIds] = useState<string[]>([]);
   const [series, setSeries] = useState<TrialSeries[]>([]);
@@ -488,17 +490,24 @@ export function PlotWorkspace() {
     });
   }, []);
 
-  const plotHeight =
-    (view === "combined" ? 1000 : 520) +
-    (showCumulativeDifference && canShowDifference
-      ? metrics.length * 220
-      : 0);
+  const plotHeight = isNarrow
+    ? (view === "combined" ? 720 : 380) +
+      (showCumulativeDifference && canShowDifference
+        ? metrics.length * 160
+        : 0)
+    : (view === "combined" ? 1000 : 520) +
+      (showCumulativeDifference && canShowDifference
+        ? metrics.length * 220
+        : 0);
 
   return (
-    <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-6 px-4 py-6 lg:flex-row lg:items-start xl:px-6">
+    <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-4 px-3 py-4 sm:gap-6 sm:px-4 sm:py-6 lg:flex-row lg:items-start xl:px-6">
       <aside
-        className="relative flex shrink-0 flex-col rounded-lg border border-border bg-panel-elevated p-3"
-        style={{ width: panelWidth, height: panelHeight }}
+        className="relative flex w-full shrink-0 flex-col rounded-lg border border-border bg-panel-elevated p-3 lg:w-auto"
+        style={{
+          width: isNarrow ? "100%" : panelWidth,
+          height: isNarrow ? Math.min(panelHeight, 260) : panelHeight,
+        }}
       >
         <h2 className="mb-3 shrink-0 text-sm font-semibold text-foreground">Trials</h2>
         <TrialSelector
@@ -510,7 +519,7 @@ export function PlotWorkspace() {
           role="separator"
           aria-orientation="vertical"
           title="Drag to resize width"
-          className="absolute inset-y-2 -right-1.5 w-3 cursor-col-resize"
+          className="absolute inset-y-2 -right-1.5 hidden w-3 cursor-col-resize lg:block"
           onPointerDown={(e) => startPanelDrag("width", e)}
           onPointerMove={onPanelDrag}
           onPointerUp={endPanelDrag}
@@ -520,7 +529,7 @@ export function PlotWorkspace() {
           role="separator"
           aria-orientation="horizontal"
           title="Drag to resize height"
-          className="absolute inset-x-2 -bottom-1.5 h-3 cursor-row-resize"
+          className="absolute inset-x-2 -bottom-1.5 hidden h-3 cursor-row-resize lg:block"
           onPointerDown={(e) => startPanelDrag("height", e)}
           onPointerMove={onPanelDrag}
           onPointerUp={endPanelDrag}
@@ -529,7 +538,7 @@ export function PlotWorkspace() {
         <div
           role="separator"
           title="Drag to resize"
-          className="absolute -bottom-1.5 -right-1.5 h-4 w-4 cursor-nwse-resize"
+          className="absolute -bottom-1.5 -right-1.5 hidden h-4 w-4 cursor-nwse-resize lg:block"
           onPointerDown={(e) => startPanelDrag("both", e)}
           onPointerMove={onPanelDrag}
           onPointerUp={endPanelDrag}
@@ -538,8 +547,8 @@ export function PlotWorkspace() {
       </aside>
 
       <section className="min-w-0 flex-1 space-y-4">
-        <div className="flex flex-wrap items-center gap-3">
-          <div className="flex flex-wrap rounded border border-border p-0.5">
+        <div className="flex flex-wrap items-center gap-2 sm:gap-3">
+          <div className="flex max-w-full flex-wrap rounded border border-border p-0.5">
             {(
               [
                 ["combined", "Combined"],
@@ -556,7 +565,7 @@ export function PlotWorkspace() {
                 key={k}
                 type="button"
                 onClick={() => setViewAndRefresh(k)}
-                className={`rounded px-3 py-1.5 text-xs ${
+                className={`rounded px-2 py-1.5 text-[11px] sm:px-3 sm:text-xs ${
                   view === k
                     ? "bg-surface-hover text-foreground"
                     : "text-muted hover:text-foreground"

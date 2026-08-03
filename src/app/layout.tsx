@@ -1,4 +1,4 @@
-import type { Metadata } from "next";
+import type { Metadata, Viewport } from "next";
 import { Nav } from "@/components/layout/Nav";
 import { ThemeProvider } from "@/components/theme/ThemeProvider";
 import { Source_Sans_3, IBM_Plex_Mono } from "next/font/google";
@@ -19,6 +19,12 @@ export const metadata: Metadata = {
   title: "Chamber Sensor Plots · Photomolecular Lab",
   description:
     "Interactive absolute humidity, RH, and temperature plots from chamber sensor CSVs",
+};
+
+export const viewport: Viewport = {
+  width: "device-width",
+  initialScale: 1,
+  viewportFit: "cover",
 };
 
 /** Avoid flash of wrong theme before React hydrates. */

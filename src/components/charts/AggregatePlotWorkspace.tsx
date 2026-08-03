@@ -16,6 +16,7 @@ import type { AggregateFitKind } from "@/lib/aggregate-series";
 import { detectAhTurnaround } from "@/lib/derived-metrics";
 import { sessionStartIso } from "@/lib/parse-csv";
 import { sortTrials } from "@/lib/trial-sort";
+import { usePrefersNarrow } from "@/lib/use-media-query";
 import type { MetricKey, PlotMode, TrialMeta, TrialSeries } from "@/types/trial";
 import { isElapsedPlotMode } from "@/types/trial";
 
@@ -116,6 +117,7 @@ function seedLightDarkIds(trials: TrialMeta[]): {
 }
 
 export function AggregatePlotWorkspace() {
+  const isNarrow = usePrefersNarrow();
   const [trials, setTrials] = useState<TrialMeta[]>([]);
   const [idsA, setIdsA] = useState<string[]>([]);
   const [idsB, setIdsB] = useState<string[]>([]);
@@ -609,19 +611,26 @@ export function AggregatePlotWorkspace() {
     return idsA.filter((id) => b.has(id)).length;
   }, [idsA, idsB]);
 
-  const plotHeight =
-    (view === "combined" ? 1000 : 520) +
-    (showCumulativeDifference && canShowDifference
-      ? metrics.length * 220
-      : 0);
+  const plotHeight = isNarrow
+    ? (view === "combined" ? 720 : 380) +
+      (showCumulativeDifference && canShowDifference
+        ? metrics.length * 160
+        : 0)
+    : (view === "combined" ? 1000 : 520) +
+      (showCumulativeDifference && canShowDifference
+        ? metrics.length * 220
+        : 0);
 
   const hasPlot = visibleA.length > 0 || visibleB.length > 0;
 
   return (
-    <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-6 px-4 py-6 lg:flex-row lg:items-start xl:px-6">
+    <div className="mx-auto flex w-full max-w-[1920px] flex-col gap-4 px-3 py-4 sm:gap-6 sm:px-4 sm:py-6 lg:flex-row lg:items-start xl:px-6">
       <aside
-        className="relative flex shrink-0 flex-col rounded-lg border border-border bg-panel-elevated p-3"
-        style={{ width: panelWidth, height: panelHeight }}
+        className="relative flex w-full shrink-0 flex-col rounded-lg border border-border bg-panel-elevated p-3 lg:w-auto"
+        style={{
+          width: isNarrow ? "100%" : panelWidth,
+          height: isNarrow ? Math.min(panelHeight, 280) : panelHeight,
+        }}
       >
         <h2 className="mb-2 shrink-0 text-sm font-semibold text-foreground">
           Aggregate sets
@@ -686,7 +695,7 @@ export function AggregatePlotWorkspace() {
           role="separator"
           aria-orientation="vertical"
           title="Drag to resize width"
-          className="absolute inset-y-2 -right-1.5 w-3 cursor-col-resize"
+          className="absolute inset-y-2 -right-1.5 hidden w-3 cursor-col-resize lg:block"
           onPointerDown={(e) => startPanelDrag("width", e)}
           onPointerMove={onPanelDrag}
           onPointerUp={endPanelDrag}
@@ -696,7 +705,7 @@ export function AggregatePlotWorkspace() {
           role="separator"
           aria-orientation="horizontal"
           title="Drag to resize height"
-          className="absolute inset-x-2 -bottom-1.5 h-3 cursor-row-resize"
+          className="absolute inset-x-2 -bottom-1.5 hidden h-3 cursor-row-resize lg:block"
           onPointerDown={(e) => startPanelDrag("height", e)}
           onPointerMove={onPanelDrag}
           onPointerUp={endPanelDrag}
@@ -705,7 +714,7 @@ export function AggregatePlotWorkspace() {
         <div
           role="separator"
           title="Drag to resize"
-          className="absolute -bottom-1.5 -right-1.5 h-4 w-4 cursor-nwse-resize"
+          className="absolute -bottom-1.5 -right-1.5 hidden h-4 w-4 cursor-nwse-resize lg:block"
           onPointerDown={(e) => startPanelDrag("both", e)}
           onPointerMove={onPanelDrag}
           onPointerUp={endPanelDrag}

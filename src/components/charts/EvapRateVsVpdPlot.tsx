@@ -34,6 +34,8 @@ import { useEffect, useMemo, useState, type ComponentType } from "react";
 import type { Data, Layout, LayoutAxis } from "plotly.js";
 import { plotThemeFor, trialColorMapById } from "@/lib/colors";
 import { useTheme } from "@/components/theme/ThemeProvider";
+import { plotlyLegend, plotlyMargins } from "@/lib/plot-layout";
+import { usePrefersNarrow } from "@/lib/use-media-query";
 import {
   ahRateSeries,
   detectAhTurnaround,
@@ -276,6 +278,7 @@ export function EvapRateVsVpdPlot({
   poolLightDark = false,
 }: Props) {
   const { mode: colorMode } = useTheme();
+  const isNarrow = usePrefersNarrow();
   const plotTheme = useMemo(() => plotThemeFor(colorMode), [colorMode]);
   const [plotFontFamily, setPlotFontFamily] = useState(
     "Source Sans 3, sans-serif",
@@ -437,29 +440,38 @@ export function EvapRateVsVpdPlot({
       title: undefined,
       paper_bgcolor: plotTheme.bg,
       plot_bgcolor: plotTheme.bg,
-      font: { color: plotTheme.text, family: plotFontFamily },
-      showlegend: true,
-      legend: {
-        title: { text: poolLightDark ? "Condition" : "Trial" },
-        bgcolor: plotTheme.bg,
-        font: { color: plotTheme.text, family: plotFontFamily },
+      font: {
+        color: plotTheme.text,
+        family: plotFontFamily,
+        size: isNarrow ? 10 : 12,
       },
-      margin: { t: 48, r: 48, b: 56, l: 72 },
+      showlegend: true,
+      legend: plotlyLegend({
+        title: poolLightDark ? "Condition" : "Trial",
+        fontFamily: plotFontFamily,
+        fontColor: plotTheme.text,
+        isNarrow,
+      }),
+      margin: plotlyMargins(isNarrow, Math.max(2, series.length * 2)),
       hovermode: "closest",
       uirevision: poolLightDark
-        ? `evap-vs-vpd-pool-${colorMode}`
-        : `evap-vs-vpd-${colorMode}`,
+        ? `evap-vs-vpd-pool-${colorMode}-${isNarrow ? "n" : "w"}`
+        : `evap-vs-vpd-${colorMode}-${isNarrow ? "n" : "w"}`,
       xaxis: {
         title: {
-          text: "Vapor Pressure Deficit (kPa)",
-          font: { color: plotTheme.text, size: 11, family: plotFontFamily },
+          text: isNarrow ? "VPD (kPa)" : "Vapor Pressure Deficit (kPa)",
+          font: {
+            color: plotTheme.text,
+            size: isNarrow ? 10 : 11,
+            family: plotFontFamily,
+          },
         },
         gridcolor: plotTheme.gridMajor,
         zeroline: true,
         zerolinecolor: plotTheme.subtext,
         tickfont: {
           color: plotTheme.subtext,
-          size: 10,
+          size: isNarrow ? 9 : 10,
           family: plotFontFamily,
         },
         autorange: false,
@@ -476,6 +488,8 @@ export function EvapRateVsVpdPlot({
     plotTheme,
     plotFontFamily,
     colorMode,
+    isNarrow,
+    series.length,
   ]);
 
   if (series.length === 0) {
@@ -494,7 +508,7 @@ export function EvapRateVsVpdPlot({
     );
   }
 
-  const mountKey = `${series.map((s) => s.meta.id).join(",")}|ahRateVsVpd|${fullResolution}|${poolLightDark ? "pool" : "trial"}|${colorMode}`;
+  const mountKey = `${series.map((s) => s.meta.id).join(",")}|ahRateVsVpd|${fullResolution}|${poolLightDark ? "pool" : "trial"}|${colorMode}|${isNarrow ? "n" : "w"}`;
 
   return (
     <div className="space-y-2">
