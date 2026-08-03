@@ -58,8 +58,8 @@ const EXPORT_THEME_VARS: Record<ColorMode, Record<string, string>> = {
   light: {
     background: "#f4f5f7",
     foreground: "#1a1b1e",
-    panel: "#ffffff",
-    "panel-elevated": "#ffffff",
+    panel: "#fcfcfc",
+    "panel-elevated": "#fcfcfc",
     border: "#d0d3d9",
     muted: "#5c5f66",
     faint: "#8a8d93",

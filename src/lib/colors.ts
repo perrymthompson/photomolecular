@@ -91,13 +91,13 @@ export const PLOT_THEME_DARK: PlotTheme = {
 };
 
 export const PLOT_THEME_LIGHT: PlotTheme = {
-  bg: "#ffffff",
+  bg: "#fcfcfc",
   gridMajor: "#d8dbe0",
   gridMinor: "#eceef1",
   text: "#1a1b1e",
   subtext: "#5c5f66",
   caption: "#8a8a8d",
-  paper: "#ffffff",
+  paper: "#fcfcfc",
 };
 
 export function plotThemeFor(mode: ColorMode): PlotTheme {
