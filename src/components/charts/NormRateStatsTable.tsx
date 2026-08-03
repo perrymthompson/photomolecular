@@ -639,6 +639,10 @@ export function NormRateStatsTable() {
               <span className="text-muted">{data.summary.excludedX}</span>
             </span>
             <span>
+              Ignored days:{" "}
+              <span className="text-muted">{data.summary.ignoredDays}</span>
+            </span>
+            <span>
               Origins saved:{" "}
               <span className="text-muted">{data.origins.length}</span>
             </span>

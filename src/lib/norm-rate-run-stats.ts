@@ -20,6 +20,11 @@
  *   stats = diffSeriesStats(Δ)           // mean, t, CI
  *   ∫Δ, AvgΔ = integralDifferenceOnSharedX
  *
+ * IGNORED DAYS
+ * ------------
+ * Edit NORM_RATE_IGNORED_DAYS to drop whole calendar days before pairing
+ * (shown in Skipped as "Day ignored …"). Still excludes Run X as usual.
+ *
  * ACROSS RUNS
  * -----------
  * Collect each run’s mean Δ, then diffSeriesStats(those means) → “across
@@ -60,6 +65,38 @@ import {
   type TrialTimeOrigins,
 } from "@/lib/trial-time-origins";
 import type { TrialSeries } from "@/types/trial";
+
+/**
+ * Whole calendar days to omit from Norm Rate stats (all comparison blocks).
+ * Use the Day column text (e.g. "July 21, 2026") and/or filename dates
+ * ("07212026" or "2026-07-21"). Run X and missing Light−Dark pairs still apply.
+ */
+export const NORM_RATE_IGNORED_DAYS: readonly string[] = [
+  // "July 21, 2026",
+];
+
+function normalizeDayToken(s: string): string {
+  return s.trim().toLowerCase();
+}
+
+function dayMatchTokens(dayKey: string, date: Date | null): Set<string> {
+  const tokens = new Set<string>([normalizeDayToken(dayKey)]);
+  if (date && !Number.isNaN(date.getTime())) {
+    const y = date.getUTCFullYear();
+    const m = String(date.getUTCMonth() + 1).padStart(2, "0");
+    const d = String(date.getUTCDate()).padStart(2, "0");
+    tokens.add(`${y}-${m}-${d}`);
+    tokens.add(`${m}${d}${y}`);
+  }
+  return tokens;
+}
+
+function isIgnoredDay(dayKey: string, date: Date | null): boolean {
+  if (NORM_RATE_IGNORED_DAYS.length === 0) return false;
+  const ignored = NORM_RATE_IGNORED_DAYS.map(normalizeDayToken);
+  const tokens = dayMatchTokens(dayKey, date);
+  return ignored.some((t) => tokens.has(t));
+}
 
 export type PairStatRow = {
   dayKey: string;
@@ -130,6 +167,8 @@ export type NormRateRunStatsResult = {
     runGroups: number;
     compared: number;
     excludedX: number;
+    /** Run groups dropped via NORM_RATE_IGNORED_DAYS. */
+    ignoredDays: number;
   };
   rows: NormRateRunStatRow[];
   acrossRuns: DiffSeriesStats | null;
@@ -196,6 +235,7 @@ export function alignedNormRateSeries(
 
 type RunGroup = {
   dayKey: string;
+  date: Date | null;
   runKey: string;
   runLetter: string;
   series: TrialSeries[];
@@ -204,6 +244,7 @@ type RunGroup = {
 function groupNonXByDayRun(all: TrialSeries[]): {
   groups: RunGroup[];
   excludedX: number;
+  ignoredDayGroups: RunGroup[];
 } {
   const map = new Map<string, RunGroup>();
   let excludedX = 0;
@@ -219,6 +260,7 @@ function groupNonXByDayRun(all: TrialSeries[]): {
     if (!g) {
       g = {
         dayKey: parts.dayKey,
+        date: parts.date,
         runKey: parts.runKey,
         runLetter: parts.runLetter,
         series: [],
@@ -228,12 +270,21 @@ function groupNonXByDayRun(all: TrialSeries[]): {
     g.series.push(s);
   }
 
-  const groups = [...map.values()].sort((a, b) => {
+  const groups: RunGroup[] = [];
+  const ignoredDayGroups: RunGroup[] = [];
+  for (const g of map.values()) {
+    if (isIgnoredDay(g.dayKey, g.date)) ignoredDayGroups.push(g);
+    else groups.push(g);
+  }
+
+  const byDayRun = (a: RunGroup, b: RunGroup) => {
     if (a.dayKey !== b.dayKey) return b.dayKey.localeCompare(a.dayKey);
     return b.runLetter.localeCompare(a.runLetter);
-  });
+  };
+  groups.sort(byDayRun);
+  ignoredDayGroups.sort(byDayRun);
 
-  return { groups, excludedX };
+  return { groups, excludedX, ignoredDayGroups };
 }
 
 function emptyBlock(
@@ -390,7 +441,7 @@ export function computeNormRateRunStats(
 ): NormRateRunStatsResult {
   const origins = allSeries.map(computeTrialTimeOrigins);
   const originsById = new Map(origins.map((o) => [o.trialId, o]));
-  const { groups, excludedX } = groupNonXByDayRun(allSeries);
+  const { groups, excludedX, ignoredDayGroups } = groupNonXByDayRun(allSeries);
   const xNote = alignNote(alignMode);
 
   const lightMinusDark = emptyBlock(
@@ -428,6 +479,17 @@ export function computeNormRateRunStats(
     "Light(90°) − Dark",
     `Light−Dark where Light is 90°. ${xNote}`,
   );
+
+  for (const g of ignoredDayGroups) {
+    const skip = {
+      dayKey: g.dayKey,
+      runKey: g.runKey,
+      reason: "Day ignored (NORM_RATE_IGNORED_DAYS)",
+    };
+    lightMinusDark.skipped.push(skip);
+    hardwareMatched.skipped.push(skip);
+    angle45Minus90.skipped.push(skip);
+  }
 
   for (const g of groups) {
     const ld = pickLightDarkPair(g.series);
@@ -563,6 +625,7 @@ export function computeNormRateRunStats(
       runGroups: groups.length,
       compared: lightMinusDark.rows.length,
       excludedX,
+      ignoredDays: ignoredDayGroups.length,
     },
     rows: lightMinusDark.rows.map(toLegacyRow),
     acrossRuns: lightMinusDark.acrossRuns,
