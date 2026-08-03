@@ -72,7 +72,7 @@ import type { TrialSeries } from "@/types/trial";
  * ("07212026" or "2026-07-21"). Run X and missing Light−Dark pairs still apply.
  */
 export const NORM_RATE_IGNORED_DAYS: readonly string[] = [
-  // "July 21, 2026",
+  "July 21, 2026", "July 22, 2026"
 ];
 
 function normalizeDayToken(s: string): string {
